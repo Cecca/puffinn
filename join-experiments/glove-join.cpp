@@ -94,6 +94,8 @@ int main(int argc, char* argv[]) {
         res = index.bf_join(k);
     } else if (method == "LSH") {
         res = index.naive_lsh_join(k, recall);
+    } else if (method == "LSHJoin") {
+        res = index.lsh_join(k, recall);
     }
     end_time = std::chrono::steady_clock::now();
     elapsed = (end_time - start_time);

@@ -64,10 +64,10 @@ namespace puffinn {
     template <typename T>
     class PrefixMap {
         using HashedVecIdx = std::pair<uint32_t, LshDatatype>;
-
         // Number of bits to precompute locations in the stored vector for.
         const static int PREFIX_INDEX_BITS = 13;
 
+    public: // TODO private
         // contents
         std::vector<uint32_t> indices;
         std::vector<LshDatatype> hashes;
