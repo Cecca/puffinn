@@ -503,12 +503,18 @@ namespace puffinn {
                                     if (!active[R] && !active[S]) {
                                          continue;
                                     }
-                                    auto dist = TSim::compute_similarity(
-                                        dataset[R], 
-                                        dataset[S], 
-                                        dataset.get_description());
-                                    maxbuffers[R]->insert(S, dist);
-                                    maxbuffers[S]->insert(R, dist);
+                                    // auto sketch_idx = j%NUM_SKETCHES;
+                                    // auto r_sketch = filterer.get_sketch(R, sketch_idx);
+                                    // auto s_sketch = filterer.get_sketch(S, sketch_idx);
+                                
+                                    // if (filterer.passes_filter(r_sketch, s_sketch, filterer.get_max_sketch_diff(maxbuffers[R]->smallest_value()))) {
+                                        auto dist = TSim::compute_similarity(
+                                            dataset[R], 
+                                            dataset[S], 
+                                            dataset.get_description());
+                                        maxbuffers[R]->insert(S, dist);
+                                        maxbuffers[S]->insert(R, dist);
+                                    // }
                                     // collisions[R]++;
                                     // collisions[S]++;
                                 }
