@@ -411,14 +411,17 @@ namespace puffinn {
             std::vector<MaxBuffer*> maxbuffers(dataset.get_size());
             bool active[dataset.get_size()];
             std::unordered_set<size_t> active_nodes;
-
+            // std::vector<int> collisions (dataset.get_size());
             for (size_t i = 0; i < dataset.get_size(); i++) {
                 maxbuffers[i] = new MaxBuffer(k);
                 active[i] = true;
                 active_nodes.insert(i);
+                // collisions[i] = 0;
             }
 
             std::vector<std::vector<uint32_t>> segments (lsh_maps.size());
+
+            int comparisons = 0;
 
             for (size_t i = 0; i < lsh_maps.size(); i++) {
                 auto last_hash = lsh_maps[i].hashes[0];
@@ -436,13 +439,15 @@ namespace puffinn {
                             auto R = lsh_maps[i].indices[r];
                             auto S = lsh_maps[i].indices[s];
                             // std::cout << "Comparing " << R << " and " << S << std::endl;
-                            //comparisons++;
+                            // comparisons++;
                             auto dist = TSim::compute_similarity(
                                 dataset[R], 
                                 dataset[S], 
                                 dataset.get_description());
                             maxbuffers[R]->insert(S, dist);
                             maxbuffers[S]->insert(R, dist);
+                            // collisions[R]++;
+                            // collisions[S]++;
                         }
                     }
                 }
@@ -469,9 +474,12 @@ namespace puffinn {
                 // check current level
                 std::cout << "Checking level " << depth << std::endl;
                 std::cout << "Active nodes: " << active_nodes.size() << std::endl;
+                if (active_nodes.size() == 0) {
+                    break;
+                }
                 std::vector<std::vector<uint32_t>> new_segments (lsh_maps.size());
                 // std::cout << "Current segments: " << std::endl;
-                // for (auto& s: segments) {
+                // for (auto& s: segments[0]) {
                 //      std::cout << s << " ";
                 // }
                 // std::cout << std::endl;
@@ -479,27 +487,30 @@ namespace puffinn {
 
                 for (size_t i = 0; i < lsh_maps.size(); i++) {
                     new_segments[i].push_back(0);
-                    for (int j = 1; j < segments.size(); j++) {
+                    for (int j = 1; j < segments[i].size(); j++) {
                         auto left = (lsh_maps[i].hashes[segments[i][j - 1]]) & prefix_mask;
                         auto actual = (lsh_maps[i].hashes[segments[i][j]]) & prefix_mask;
                         if (left == actual) {
                             // std::cout << "Merging " << i - 1 << " and " << i << std::endl;
                             // carry out all-to-all
+                            // TODO Check if both segments are empty.
                             for (int r = segments[i][j-1]; r < segments[i][j]; r++) {
                                 for (int s = segments[i][j]; s < segments[i][j + 1]; s++) {
                                     auto R = lsh_maps[i].indices[r];
                                     auto S = lsh_maps[i].indices[s];
                                     // std::cout << "Comparing " << R << " and " << S << std::endl;
-                                    //comparisons++;
-                                    // if (!active[R] && !active[S]) {
-                                    //     continue;
-                                    // }
+                                    // comparisons++;
+                                    if (!active[R] && !active[S]) {
+                                         continue;
+                                    }
                                     auto dist = TSim::compute_similarity(
                                         dataset[R], 
                                         dataset[S], 
                                         dataset.get_description());
                                     maxbuffers[R]->insert(S, dist);
                                     maxbuffers[S]->insert(R, dist);
+                                    // collisions[R]++;
+                                    // collisions[S]++;
                                 }
                             }
                         } else {
@@ -539,7 +550,7 @@ namespace puffinn {
                         // g_performance_metrics.set_considered_maps(
                             // (MAX_HASHBITS-depth+1)*lsh_maps.size());
                         // return;
-                        // std::cout << failure_prob << std::endl;
+                        //std::cout << kth_similarity << std::endl;
                         new_active.insert(v);
                     } else {
                         //std::cout << failure_prob << std::endl;
@@ -553,9 +564,9 @@ namespace puffinn {
 
             for (int i = 0; i < dataset.get_size(); i++) {
                 auto best = maxbuffers[i]->best_indices();
-                if (best.size() != k) {
-                    std::cout << "error!" << std::endl;
-                }
+                // if (best.size() != k) {
+                    // std::cout << "error! " << best.size() << " " << collisions[i] << std::endl;
+                // }
                 res.push_back(best);
             }
             return res;
