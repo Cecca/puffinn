@@ -389,7 +389,7 @@ namespace puffinn {
         
         /// Compute a per-point top-K self-join on the current index with ``recall``.
         ///
-        /// 
+        /// This carries out an individual  query for each point in the index.
         std::vector<std::vector<uint32_t>> naive_lsh_join(
             unsigned int k,
             float recall,
@@ -402,14 +402,23 @@ namespace puffinn {
             return res;
         }
 
+        /// Compute a per-point top-K self-join on the current index with ``recall``.
+        ///
+        /// 
         std::vector<std::vector<uint32_t>> lsh_join(
             unsigned int k,
             float recall,
             FilterType filter_type = FilterType::Default
         ) {
             std::vector<std::vector<uint32_t>> res;
+            
+            // Allocate a buffer for each data point.
             std::vector<MaxBuffer*> maxbuffers(dataset.get_size());
+
+            // Is a point still active?
             bool active[dataset.get_size()];
+
+            // The set of active points.
             std::unordered_set<size_t> active_nodes;
             // std::vector<int> collisions (dataset.get_size());
             for (size_t i = 0; i < dataset.get_size(); i++) {
@@ -419,23 +428,27 @@ namespace puffinn {
                 // collisions[i] = 0;
             }
 
+            // Store segments efficiently (?).
+            // indices in segments[i][j-1], ..., segments[i][j]-1 in lsh_maps[i]
+            // share the same hash code.
             std::vector<std::vector<uint32_t>> segments (lsh_maps.size());
 
             int comparisons = 0;
 
+            // Set up data structures. Create segments for initial hash codes.
             for (size_t i = 0; i < lsh_maps.size(); i++) {
-                auto last_hash = lsh_maps[i].hashes[0];
                 segments[i].push_back(0);
                 for (size_t j = 1; j < lsh_maps[i].hashes.size(); j++) {
-                    if (lsh_maps[i].hashes[j] != last_hash) {
+                    if (lsh_maps[i].hashes[j] != lsh_maps[i].hashes[j-1]) {
                         segments[i].push_back(j);
-                        last_hash = lsh_maps[i].hashes[j];
                     }
                 }
 
-                for (size_t j = 1; j < segments[i].size() - 1; j++) { 
-                    for (int r = segments[i][j-1] + 1; r <= segments[i][j]; r++) {
-                        for (int s = r; s <= segments[i][j]; s++) {
+                // Carry out initial all-to-all comparisons within a segment.
+                // We leave out the first and last segment since it's filled up with filler elements.
+                for (size_t j = 2; j < segments[i].size() - 1; j++) { 
+                    for (int r = segments[i][j-1] + 1; r < segments[i][j]; r++) {
+                        for (int s = r; s < segments[i][j]; s++) {
                             auto R = lsh_maps[i].indices[r];
                             auto S = lsh_maps[i].indices[s];
                             // std::cout << "Comparing " << R << " and " << S << std::endl;
@@ -469,6 +482,7 @@ namespace puffinn {
             // }
             // std::cout << std::endl;
 
+            
             uint32_t prefix_mask = 0xffffffff;
             for (int depth = MAX_HASHBITS; depth >= 0; depth--) {
                 // check current level
@@ -484,9 +498,10 @@ namespace puffinn {
                 // }
                 // std::cout << std::endl;
 
-
                 for (size_t i = 0; i < lsh_maps.size(); i++) {
                     new_segments[i].push_back(0);
+
+                    // check each pair of adjacent segments in lsh_maps[i] in ``depth``.
                     for (int j = 1; j < segments[i].size(); j++) {
                         auto left = (lsh_maps[i].hashes[segments[i][j - 1]]) & prefix_mask;
                         auto actual = (lsh_maps[i].hashes[segments[i][j]]) & prefix_mask;
@@ -519,6 +534,7 @@ namespace puffinn {
                                     // collisions[S]++;
                                 }
                             }
+                            j++; // don't have to each the segment to the right, because we merged with left
                         } else {
                             new_segments[i].push_back(segments[i][j]);
                         }
@@ -535,11 +551,10 @@ namespace puffinn {
                 //     std::cout << s << ";";
                 // }
                 // std::cout << std::endl;
-                segments = new_segments;
-                prefix_mask <<= 1;
 
-                std::unordered_set<size_t> new_active;
+                std::unordered_set<size_t> new_active (active_nodes.size());
 
+                // remove inactive nodes
                 for (auto& v: active_nodes) {
                     auto kth_similarity = maxbuffers[v]->smallest_value();
                     auto table_idx = lsh_maps.size();
@@ -563,7 +578,11 @@ namespace puffinn {
                         active[v] = false;
                     }
                 }
+
+                // prepare next round
+                segments = new_segments;
                 active_nodes = new_active;
+                prefix_mask <<= 1;
             }
             // auto n = dataset.get_size();
             // std::cout << "comparisons: " << comparisons << "; should be " << (n * (n - 1) / 2 + n) << std::endl;
