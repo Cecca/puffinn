@@ -45,7 +45,7 @@ int main(int argc, char* argv[]) {
     std::string method = "BF";
     unsigned long long space_usage = 100*MB;
     switch (argc) {
-        case 6: space_usage = static_cast<unsigned long long>(std::atof(argv[5])*MB); 
+        case 6: space_usage = static_cast<unsigned long long>(std::atof(argv[5])); 
         case 5: method = std::string(argv[4]);
         case 4: recall = std::atof(argv[3]); 
         case 3: k = std::atoi(argv[2]);
@@ -53,7 +53,7 @@ int main(int argc, char* argv[]) {
                 break;
         default:
             std::cerr << "Usage: " << argv[0]
-                << " filename (number of neighbors) (recall) (BF|LSH) (space_usage in MB)" << std::endl;
+                << " filename (number of neighbors) (recall) (BF|LSH|LSHJoin) (number_of_tables)" << std::endl;
             return -1;
     }
 

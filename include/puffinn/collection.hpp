@@ -252,20 +252,22 @@ namespace puffinn {
 
             uint64_t required_mem = dataset.memory_usage()+filterer_bytes; 
             unsigned int num_tables = 0;
-            uint64_t table_mem = 0;
-            while (required_mem + table_mem < memory_limit) {
-                num_tables++;
-                table_mem = hash_args->memory_usage(desc, num_tables, MAX_HASHBITS)
-                    + num_tables * table_bytes;
-            }
-            if (num_tables != 0) {
-                num_tables--;
-            }
+            // uint64_t table_mem = 0;
+            // while (required_mem + table_mem < memory_limit) {
+            //     num_tables++;
+            //     table_mem = hash_args->memory_usage(desc, num_tables, MAX_HASHBITS)
+            //         + num_tables * table_bytes;
+            // }
+            // if (num_tables != 0) {
+            //     num_tables--;
+            // }
 
-            // Not enough memory for at least one table
-            if (num_tables == 0) {
-                throw std::invalid_argument("insufficient memory");
-            }
+            // // Not enough memory for at least one table
+            // if (num_tables == 0) {
+            //     throw std::invalid_argument("insufficient memory");
+            // }
+
+            num_tables = memory_limit;
 
             printf("Building %d tables\n", num_tables);
 
@@ -386,6 +388,39 @@ namespace puffinn {
             }
             return res;
         }
+
+        bool check_active_counts(const std::vector<uint32_t>& indices, const std::vector<uint32_t>& segments,
+            const bool* active, const std::vector<uint32_t>& active_counts) {
+
+            std::cout << active_counts.size() << std::endl;
+            std::cout << segments.size() - 1 << std::endl;
+            std::cout << segments[segments.size() - 1] << std::endl;
+            for (uint32_t j = 2; j < segments.size(); j++) {
+                auto left = segments[j - 1];
+                auto right = segments[j] - 1;
+                auto cnt = 0;
+
+                std::cout << j << " (" << left << " --- " << right << ") of " << segments.size() - 1 << std::endl;
+                for (size_t l = left; l <= right; l++) {
+                    if (l <= 0 || l >= indices.size()) {
+                        std::cout << l << std::endl;
+                    }
+                    if (active[indices[l]]) {
+                        cnt++;
+                        if (indices[l] == 0) {
+                            cnt = active_counts[j - 1];
+                            break;
+                        }
+                    }
+                }
+                if (cnt != active_counts[j-1]) {
+                    std::cout << "error at " << j << ": " << cnt << " " << active_counts[j-1] << std::endl;
+                    return false;
+                }
+            }
+            std::cout << "Finished check!" << std::endl;
+            return true;
+        }
         
         /// Compute a per-point top-K self-join on the current index with ``recall``.
         ///
@@ -419,7 +454,8 @@ namespace puffinn {
             bool active[dataset.get_size()];
 
             // The set of active points.
-            std::unordered_set<size_t> active_nodes;
+            std::unordered_set<uint32_t> active_nodes;
+            
             // std::vector<int> collisions (dataset.get_size());
             for (size_t i = 0; i < dataset.get_size(); i++) {
                 maxbuffers[i] = new MaxBuffer(k);
@@ -432,6 +468,14 @@ namespace puffinn {
             // indices in segments[i][j-1], ..., segments[i][j]-1 in lsh_maps[i]
             // share the same hash code.
             std::vector<std::vector<uint32_t>> segments (lsh_maps.size());
+            // Store count of active nodes in each segment.
+            // active_count[i][j] = number of active nodes in 
+            // segments[i][j-1], ..., segments[i][j]-1.
+            std::vector<std::vector<uint32_t>> active_count (lsh_maps.size());
+
+            // node_positions[i][j]: position of node i in lsh_maps[j]
+            std::vector<std::vector<size_t>> node_positions (dataset.get_size());
+
 
             int comparisons = 0;
 
@@ -441,7 +485,10 @@ namespace puffinn {
                 for (size_t j = 1; j < lsh_maps[i].hashes.size(); j++) {
                     if (lsh_maps[i].hashes[j] != lsh_maps[i].hashes[j-1]) {
                         segments[i].push_back(j);
+                        // all the points are active
+                        active_count[i].push_back(j - segments[i][segments[i].size() - 2]);
                     }
+                    node_positions[lsh_maps[i].indices[j]].push_back(j);
                 }
 
                 // Carry out initial all-to-all comparisons within a segment.
@@ -465,6 +512,7 @@ namespace puffinn {
                     }
                 }
             }
+            std::cout << "Initial scan done" << std::endl;
             //int comparisons = 0;
 
             // std::cout << "Current segments: " << std::endl;
@@ -492,6 +540,8 @@ namespace puffinn {
                     break;
                 }
                 std::vector<std::vector<uint32_t>> new_segments (lsh_maps.size());
+                std::vector<std::vector<uint32_t>> new_active_count (lsh_maps.size());
+
                 // std::cout << "Current segments: " << std::endl;
                 // for (auto& s: segments[0]) {
                 //      std::cout << s << " ";
@@ -509,6 +559,9 @@ namespace puffinn {
                             // std::cout << "Merging " << i - 1 << " and " << i << std::endl;
                             // carry out all-to-all
                             // TODO Check if both segments are empty.
+                            if (active_count[i][j - 1] == 0 && active_count[i][j] == 0) {
+                                continue;
+                            }
                             for (int r = segments[i][j-1]; r < segments[i][j]; r++) {
                                 for (int s = segments[i][j]; s < segments[i][j + 1]; s++) {
                                     auto R = lsh_maps[i].indices[r];
@@ -534,9 +587,12 @@ namespace puffinn {
                                     // collisions[S]++;
                                 }
                             }
-                            j++; // don't have to each the segment to the right, because we merged with left
+                            // TODO Merge active counts
+                            active_count[i][j] += active_count[i][j-1];                            
                         } else {
                             new_segments[i].push_back(segments[i][j]);
+                            new_active_count[i].push_back(active_count[i][j-1]);
+
                         }
                     }
                 }    
@@ -552,7 +608,9 @@ namespace puffinn {
                 // }
                 // std::cout << std::endl;
 
-                std::unordered_set<size_t> new_active (active_nodes.size());
+                std::unordered_set<uint32_t> new_active (active_nodes.size());
+
+                std::cout << " Removing inactive nodes." << std::endl;
 
                 // remove inactive nodes
                 for (auto& v: active_nodes) {
@@ -576,12 +634,24 @@ namespace puffinn {
                     } else {
                         //std::cout << failure_prob << std::endl;
                         active[v] = false;
+                        // std::cout << "Removing " << v << std::endl;
+                        // TODO: 0 seems to be used by the filler segments, but is also the first actual data point.
+                        if (v == 0)
+                            continue;
+                        for (size_t i = 0; i < node_positions[v].size(); i++) {
+                            auto pos = node_positions[v][i];
+                            auto it = std::upper_bound(new_segments[i].begin(), new_segments[i].end(), pos);
+                            auto j = (it - new_segments[i].begin());
+                            new_active_count[i][j-1]--;
+                        }
                     }
                 }
 
                 // prepare next round
                 segments = new_segments;
                 active_nodes = new_active;
+                active_count = new_active_count;
+                //check_active_counts(lsh_maps[0].indices, segments[0], active, active_count[0]);
                 prefix_mask <<= 1;
             }
             // auto n = dataset.get_size();
