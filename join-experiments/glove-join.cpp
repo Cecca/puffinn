@@ -4,6 +4,8 @@
 #include <iostream>
 #include <map>
 #include <vector>
+#include <highfive/H5Attribute.hpp>
+#include <highfive/H5File.hpp>
 #include "puffinn.hpp"
 
 struct Dataset {
@@ -15,18 +17,32 @@ struct Dataset {
 
 void write_result(
     const std::string& filename, 
-    const std::vector<std::vector<uint32_t>>& res
+    const std::vector<std::vector<uint32_t>>& res,
+    const uint32_t num_tables,
+    const float recall,
+    const uint32_t k,
+    const double time
     ) {
-    
-    size_t n = res.size();
-    size_t k = res[0].size();
-    std::ofstream fout(filename, std::ios::out | std::ios::binary);
-    fout.write((char*) &n, sizeof(size_t));
-    fout.write((char*) &k, sizeof(size_t));
-    for (auto& v: res) {
-        fout.write((char*)&v[0], v.size() * sizeof(uint32_t));
+
+    using namespace HighFive;
+
+    try {
+        File file(filename, File::ReadWrite | File::Create | File::Truncate);
+
+        DataSet results = file.createDataSet<uint32_t>("results", DataSpace::From(res));
+        results.write(res);
+        Attribute a = file.createAttribute<uint32_t>("k", DataSpace::From(k));
+        a.write(k);
+        a = file.createAttribute<float>("recall", DataSpace::From(recall));
+        a.write(recall);
+        a = file.createAttribute<uint32_t>("num_tables", DataSpace::From(num_tables));
+        a.write(num_tables);
+        a = file.createAttribute<double>("time", DataSpace::From(time));
+        a.write(time);
+
+    } catch (Exception& err) {
+        std::cerr << err.what() << std::endl;
     }
-    fout.close();
 }
 
 
@@ -98,10 +114,13 @@ int main(int argc, char* argv[]) {
         res = index.lsh_join(k, recall);
     }
     end_time = std::chrono::steady_clock::now();
-    elapsed = (end_time - start_time);
-    throughput = ((float) dataset.words.size()) / elapsed.count();
-    std::cerr << "Join computed in " << elapsed.count() << " s " << throughput << " queries/s" << std::endl;
-    write_result(method, res);
+    std::chrono::duration<double> elapsed_join = (end_time - start_time);
+    throughput = ((float) dataset.words.size()) / elapsed_join.count();
+    std::cerr << "Join computed in " << elapsed_join.count() << " s " << throughput << " queries/s" << std::endl;
+    std::stringstream ss;
+    ss << method << "_" << k << "_" << recall << "_" << space_usage << ".hdf5";
+    
+    write_result(ss.str(), res, space_usage, recall, k, elapsed.count() + elapsed_join.count());
 
 }
 
