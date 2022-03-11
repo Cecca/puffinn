@@ -278,6 +278,26 @@ namespace puffinn {
             }
         }
 
+        std::pair<const uint32_t*, const uint32_t*> get_segment(size_t left, size_t right) {
+            return std::make_pair(&indices[left], &indices[right]);
+        }
+
+        void create_segments(
+            std::vector<uint32_t>& segments, 
+            std::vector<uint32_t>& active_count,
+            std::vector<std::vector<uint32_t>>& node_positions
+        ) {
+            segments.push_back(0);
+            for (size_t j = 1; j < hashes.size(); j++) {
+                if (hashes[j] != hashes[j-1]) {
+                    segments.push_back(j);
+                    // all the points are active
+                    active_count.push_back(j - segments[segments.size() - 2]);
+                }
+                node_positions[indices[j]].push_back(j);
+            }
+        }
+
         static uint64_t memory_usage(size_t size, uint64_t function_size) {
             size = size+2*SEGMENT_SIZE;
             return sizeof(PrefixMap)
