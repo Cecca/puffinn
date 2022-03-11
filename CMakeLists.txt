@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(Puffinn CXX)
+project(Puffinn CXX C)
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -Wall -Wextra -Wno-noexcept-type -Wno-implicit-fallthrough -Wno-unused-function -march=native -O3 -g")
@@ -8,6 +8,13 @@ find_package(OpenMP)
 if (OpenMP_FOUND)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 endif()
+
+find_package(HDF5)
+if (HDF5_FOUND)
+   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${HDF5_CXX_FLAGS}")
+endif()
+
+add_subdirectory("external/HighFive")
 
 include_directories("include")
 
@@ -18,7 +25,7 @@ endif()
 
 add_executable(GloveJoin "join-experiments/glove-join.cpp")
 if (OpenMP_FOUND)
-    target_link_libraries(GloveJoin ${OpenMP_CXX_LIBRARIES})
+    target_link_libraries(GloveJoin ${OpenMP_CXX_LIBRARIES} HighFive)
 endif()
 
 include_directories("test/include")
