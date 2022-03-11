@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -16,7 +17,8 @@ struct Dataset {
 };
 
 void write_result(
-    const std::string& filename, 
+    const std::string& method_name,
+    const std::string& ds_name,
     const std::vector<std::vector<uint32_t>>& res,
     const uint32_t num_tables,
     const float recall,
@@ -27,7 +29,14 @@ void write_result(
     using namespace HighFive;
 
     try {
-        File file(filename, File::ReadWrite | File::Create | File::Truncate);
+
+        std::stringstream ss;
+        ss << ds_name << "/" << k << "/" << method_name;
+
+        std::filesystem::create_directories(ss.str());
+        
+        ss << "/" << recall << "_" << num_tables << ".hdf5";
+        File file(ss.str(), File::ReadWrite | File::Create | File::Truncate);
 
         DataSet results = file.createDataSet<uint32_t>("results", DataSpace::From(res));
         results.write(res);
@@ -117,10 +126,13 @@ int main(int argc, char* argv[]) {
     std::chrono::duration<double> elapsed_join = (end_time - start_time);
     throughput = ((float) dataset.words.size()) / elapsed_join.count();
     std::cerr << "Join computed in " << elapsed_join.count() << " s " << throughput << " queries/s" << std::endl;
-    std::stringstream ss;
-    ss << method << "_" << k << "_" << recall << "_" << space_usage << ".hdf5";
+
+    std::string dataset_fn(filename);
+    auto slash_pos = dataset_fn.find_last_of("/");
+    auto suffix_pos = dataset_fn.find_last_of(".");
+
     
-    write_result(ss.str(), res, space_usage, recall, k, elapsed.count() + elapsed_join.count());
+    write_result(method, dataset_fn.substr(slash_pos + 1, suffix_pos - slash_pos - 1), res, space_usage, recall, k, elapsed.count() + elapsed_join.count());
 
 }
 
