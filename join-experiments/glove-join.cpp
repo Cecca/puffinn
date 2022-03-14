@@ -8,6 +8,7 @@
 #include <highfive/H5Attribute.hpp>
 #include <highfive/H5File.hpp>
 #include "puffinn.hpp"
+#include "puffinn/performance.hpp"
 
 struct Dataset {
     std::vector<std::string> words;
@@ -23,7 +24,8 @@ void write_result(
     const uint32_t num_tables,
     const float recall,
     const uint32_t k,
-    const double time
+    const double time,
+    const std::string& details
     ) {
 
     using namespace HighFive;
@@ -48,6 +50,8 @@ void write_result(
         a.write(num_tables);
         a = file.createAttribute<double>("time", DataSpace::From(time));
         a.write(time);
+        a = file.createAttribute<std::string>("details", DataSpace::From(details));
+        a.write(details);
 
     } catch (Exception& err) {
         std::cerr << err.what() << std::endl;
@@ -78,7 +82,7 @@ int main(int argc, char* argv[]) {
                 break;
         default:
             std::cerr << "Usage: " << argv[0]
-                << " filename (number of neighbors) (recall) (BF|LSH|LSHJoin) (number_of_tables)" << std::endl;
+                << " filename (number of neighbors) (recall) (BF|LSH|LSHJoin|LSHJoinGlobal) (number_of_tables)" << std::endl;
             return -1;
     }
 
@@ -117,10 +121,14 @@ int main(int argc, char* argv[]) {
     std::vector<std::vector<uint32_t>>  res;
     if (method == "BF") {
         res = index.bf_join(k);
+    } else if (method == "BFGlobal") {
+        index.global_bf_join(k);
     } else if (method == "LSH") {
         res = index.naive_lsh_join(k, recall);
     } else if (method == "LSHJoin") {
         res = index.lsh_join(k, recall);
+    } else if (method == "LSHJoinGlobal") {
+        index.global_lsh_join(k, recall);
     }
     end_time = std::chrono::steady_clock::now();
     std::chrono::duration<double> elapsed_join = (end_time - start_time);
@@ -131,8 +139,31 @@ int main(int argc, char* argv[]) {
     auto slash_pos = dataset_fn.find_last_of("/");
     auto suffix_pos = dataset_fn.find_last_of(".");
 
-    
-    write_result(method, dataset_fn.substr(slash_pos + 1, suffix_pos - slash_pos - 1), res, space_usage, recall, k, elapsed.count() + elapsed_join.count());
+    auto total_time =  puffinn::g_performance_metrics.get_total_time(puffinn::Computation::Total);
+    auto search_time = puffinn::g_performance_metrics.get_total_time(puffinn::Computation::Search);
+    auto filter_time = puffinn::g_performance_metrics.get_total_time(puffinn::Computation::Filtering);
+    auto init_time = puffinn::g_performance_metrics.get_total_time(puffinn::Computation::SearchInit);
+
+    std::stringstream ss;
+
+    ss << "search_time=" <<  search_time
+        << "; filter_time=" << filter_time
+        << "; init_time=" << init_time 
+        << "; total_time=" << total_time;
+
+    std::cout << "search_time:" <<  search_time
+        << "\nfilter_time=" << filter_time
+        << "\ninit_time=" << init_time 
+        << "\ntotal_time=" << total_time << std::endl;
+
+    write_result(method, 
+        dataset_fn.substr(slash_pos + 1, suffix_pos - slash_pos - 1), 
+        res, 
+        space_usage, 
+        recall, 
+        k, 
+        elapsed.count() + elapsed_join.count(),
+        ss.str());
 
 }
 
