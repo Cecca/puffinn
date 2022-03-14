@@ -159,7 +159,7 @@ int main(int argc, char* argv[]) {
     write_result(method, 
         dataset_fn.substr(slash_pos + 1, suffix_pos - slash_pos - 1), 
         res, 
-        space_usage, 
+        index.get_repetitions(), 
         recall, 
         k, 
         elapsed.count() + elapsed_join.count(),

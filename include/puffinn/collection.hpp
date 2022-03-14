@@ -253,22 +253,20 @@ namespace puffinn {
 
             uint64_t required_mem = dataset.memory_usage()+filterer_bytes; 
             unsigned int num_tables = 0;
-            // uint64_t table_mem = 0;
-            // while (required_mem + table_mem < memory_limit) {
-            //     num_tables++;
-            //     table_mem = hash_args->memory_usage(desc, num_tables, MAX_HASHBITS)
-            //         + num_tables * table_bytes;
-            // }
-            // if (num_tables != 0) {
-            //     num_tables--;
-            // }
+            uint64_t table_mem = 0;
+            while (required_mem + table_mem < memory_limit) {
+                num_tables++;
+                table_mem = hash_args->memory_usage(desc, num_tables, MAX_HASHBITS)
+                    + num_tables * table_bytes;
+            }
+            if (num_tables != 0) {
+                num_tables--;
+            }
 
-            // // Not enough memory for at least one table
-            // if (num_tables == 0) {
-            //     throw std::invalid_argument("insufficient memory");
-            // }
-
-            num_tables = memory_limit;
+            // Not enough memory for at least one table
+            if (num_tables == 0) {
+                throw std::invalid_argument("insufficient memory");
+            }
 
             printf("Building %d tables\n", num_tables);
 
