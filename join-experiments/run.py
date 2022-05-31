@@ -21,13 +21,11 @@ import h5py
 import sys
 import yaml
 import shlex
-import faiss
 import os
 import hashlib
 import sqlite3
 import json
 import random
-import numba
 from urllib.request import urlopen
 from urllib.request import urlretrieve
 
@@ -402,6 +400,7 @@ class SubprocessAlgorithm(Algorithm):
 
 
 class FaissIVF(Algorithm):
+
     def __init__(self):
         self.faiss_index = None
         self.k = None
@@ -504,6 +503,67 @@ class FaissHNSW(Algorithm):
         return self.time_index, self.time_run
 
 
+class MPLSH(Algorithm):
+    import nmslib
+
+    def __init__(self):
+        self.index = None
+        self.k = None
+        self.params = None
+        self.data = None
+        self.time_index = None
+        self.time_run = None
+        self.result_indices = None
+
+    def setup(self, k, params):
+        """Configure the parameters of the algorithm"""
+        self.k = k
+        self.params = params
+        #faiss.omp_set_num_threads(params['threads'])
+
+    def feed_data(self, h5py_path):
+        """Pass the data to the algorithm"""
+        f = h5py.File(h5py_path)
+        assert f.attrs['distance'] == 'cosine' or f.attrs['distance'] == 'angular'
+        self.data = np.array(f['train'])
+        f.close()
+    def encode(d):
+        return ["%s=%s" % (a, b) for (a, b) in d.iteritems()]
+
+    def index(self):
+        """Setup the index, if any. This is timed."""
+        print("  Building index")
+        start = time.time()
+        X = sklearn.preprocessing.normalize(self.data, axis=1, norm='l2')
+
+        self.index = nmslib.init("cosinesimil", [], self.params["method_name"], nmslib.DataType.DENSE_VECTOR, nmslib.DistType.FLOAT)
+
+
+        if X.dtype != np.float32:
+            X = X.astype(np.float32)
+        for i, x in enumerate(X):
+            nmslib.addDataPoint(self.index, x.tolist())
+
+        nmslib.createIndex(self.index, self.encode(self.params["params"]))
+  
+        self.time_index = time.time() - start
+
+    def run(self):
+        """Run the workload. This is timed."""
+        print("  Top-{} join".format(self.k))
+        start = time.time()
+        _dists, idxs = nmslib.knnQuery(self.index, self.k + 1, )
+        self.time_run = time.time() - start
+        self.result_indices = idxs[:,1:]
+
+    def result(self):
+        return self.result_indices
+
+    def times(self):
+        """Returns the pair (index_time, workload_time)"""
+        return self.time_index, self.time_run
+
+
 class BruteForceLocal(Algorithm):
     def __init__(self):
         self.data = None
@@ -590,6 +650,16 @@ def random_jaccard(out_fn, n=10000, size=50, universe=80):
 
     write_sparse(out_fn, train)
     return out_fn
+
+def random_float(out_fn, n_dims, n_samples, centers):
+    import sklearn.datasets
+    if os.path.isfile(out_fn):
+        return
+
+    X, _ = sklearn.datasets.make_blobs(
+        n_samples=n_samples, n_features=n_dims,
+        centers=centers, random_state=1)
+    write_dense(out_fn, X)
 
 
 def glove(out_fn, dims):
@@ -849,6 +919,7 @@ DATASETS = {
     'Kosarak': lambda: kosarak(os.path.join(DATASET_DIR, 'kosarak.hdf5')),
     'DeepImage': lambda: deep_image(os.path.join(DATASET_DIR, 'deep_image.hdf5')),
     'NYTimes': lambda: nytimes(os.path.join(DATASET_DIR, 'nytimes.hdf5'), 256),
+    'random-float-10k': lambda: random_float(os.path.join(DATASET_DIR, 'random-float-10k.hdf5' ), 20, 10000, 100)
 }
 
 # Stores lazily the algorithm (i.e. as funcions to be called) along with their version
@@ -858,6 +929,7 @@ ALGORITHMS = {
     'BruteForceLocal': lambda: (BruteForceLocal(),                          1),
     'faiss-HNSW':      lambda: (FaissHNSW(),                                1),
     'faiss-IVF':       lambda: (FaissIVF(),                                 1),
+    'nmslib-MPLSH':    lambda: (MPLSH(),                                   1),
     # Global top-k baselines
     'XiaoEtAl':        lambda: (SubprocessAlgorithm(["build/XiaoEtAl"]),    1)
 }
@@ -960,21 +1032,21 @@ if __name__ == "__main__":
     with get_db() as db:
         compute_recalls(db)
 
-    run_config({
-        'dataset': 'NYTimes',
-        'workload': 'local-top-k',
-        'k': 1000,
-        'algorithm': 'BruteForceLocal',
-        'params': {}
-    })
+    # run_config({
+    #     'dataset': 'NYTimes',
+    #     'workload': 'local-top-k',
+    #     'k': 1000,
+    #     'algorithm': 'BruteForceLocal',
+    #     'params': {}
+    # })
 
-    run_config({
-        'dataset': 'DeepImage',
-        'workload': 'local-top-k',
-        'k': 1000,
-        'algorithm': 'BruteForceLocal',
-        'params': {'prefix': 10000}
-    })
+    # run_config({
+    #     'dataset': 'DeepImage',
+    #     'workload': 'local-top-k',
+    #     'k': 1000,
+    #     'algorithm': 'BruteForceLocal',
+    #     'params': {'prefix': 10000}
+    # })
 
     threads = 56
 
@@ -989,25 +1061,26 @@ if __name__ == "__main__":
     #         'params': {}
     #     })
 
-    for dataset in ['NYTimes', 'glove-25', 'DeepImage']:
+    for dataset in ['random-float']:
+    # for dataset in ['NYTimes', 'glove-25', 'DeepImage']:
         # ----------------------------------------------------------------------
         # Faiss-HNSW
         # for M in [4, 8, 16, 32, 64, 128, 256, 512, 1024]:
-        for M in [48, 64]:
-            for efConstruction in [100, 500]:
-                for efSearch in [10, 40, 80, 120, 800]:
-                    run_config({
-                        'dataset': dataset,
-                        'workload': 'local-top-k',
-                        'k': 10,
-                        'algorithm': 'faiss-HNSW',
-                        'threads': threads,
-                        'params': {
-                            'M': M,
-                            'efConstruction': efConstruction,
-                            'efSearch': efSearch,
-                        }
-                    })
+        # for M in [48, 64]:
+        #     for efConstruction in [100, 500]:
+        #         for efSearch in [10, 40, 80, 120, 800]:
+        #             run_config({
+        #                 'dataset': dataset,
+        #                 'workload': 'local-top-k',
+        #                 'k': 10,
+        #                 'algorithm': 'faiss-HNSW',
+        #                 'threads': threads,
+        #                 'params': {
+        #                     'M': M,
+        #                     'efConstruction': efConstruction,
+        #                     'efSearch': efSearch,
+        #                 }
+        #             })
 
         # ----------------------------------------------------------------------
         # Faiss-IVF
@@ -1027,22 +1100,38 @@ if __name__ == "__main__":
 
         # ----------------------------------------------------------------------
         # PUFFINN local top-k
-        for hash_source in ['Independent']:
-            for recall in [0.8, 0.9]:
-                for space_usage in [8192, 16384, 32768]:
-                    run_config({
-                        'dataset': dataset,
-                        'workload': 'local-top-k',
-                        'k': 10,
-                        'algorithm': 'PUFFINN',
-                        'threads': threads,
-                        'params': {
-                            'method': 'LSHJoin',
-                            'recall': recall,
-                            'space_usage': space_usage,
-                            'hash_source': hash_source
+        # for hash_source in ['Independent']:
+        #     for recall in [0.8, 0.9]:
+        #         for space_usage in [8192, 16384, 32768]:
+        #             run_config({
+        #                 'dataset': dataset,
+        #                 'workload': 'local-top-k',
+        #                 'k': 10,
+        #                 'algorithm': 'PUFFINN',
+        #                 'threads': threads,
+        #                 'params': {
+        #                     'method': 'LSHJoin',
+        #                     'recall': recall,
+        #                     'space_usage': space_usage,
+        #                     'hash_source': hash_source
+        #                 }
+        #             })
+        
+        for recall in [0.8, 0.9]:
+            for L in [50, 100]:
+                run_config({
+                    'dataset': dataset,
+                    'workload': 'local-top-k',
+                    'k': 10,
+                    'algorithm': 'MPLSH',
+                    'threads': threads,
+                    'params': {
+                        'method': 'lsh_multiprobe',
+                        'parameters' : {
+                            "H": 1200001, "T": 10, "L": L, "tuneK": 10
                         }
-                    })
+                    }
+                })
 
     # run_config({
     #     'dataset': 'glove-25',
