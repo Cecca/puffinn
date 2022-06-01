@@ -14,8 +14,10 @@
 #include <algorithm>
 #include <string>
 #include <chrono>
+#include <omp.h>
 #include "protocol.hpp"
 #include "puffinn.hpp"
+#include "puffinn/performance.hpp"
 
 struct Pair
 {
@@ -74,7 +76,7 @@ float euclidean(std::vector<float> &a, std::vector<float> &b) {
     float diff = (a[i] - b[i]);
     s += diff * diff;
   }
-  return std::sqrtf(s);
+  return std::sqrt(s);
 }
 
 std::pair<std::vector<std::pair<uint64_t, size_t>>, size_t> build_index(std::vector<std::vector<float>> &dataset, size_t m, double w, size_t seed) {
@@ -85,10 +87,10 @@ std::pair<std::vector<std::pair<uint64_t, size_t>>, size_t> build_index(std::vec
   rng.seed(seed);
 
   float extent = compute_extent(dataset);
-  float f = std::ceilf( std::log2f(extent) + std::log2f(d) );
+  float f = std::ceil( std::log2f(extent) + std::log2f(d) );
 
   // Instantiate hash functions
-  std::uniform_real_distribution<> uniform(0.0, w * std::powf(2.0, f));
+  std::uniform_real_distribution<> uniform(0.0, w * std::pow(2.0, f));
   std::normal_distribution<> normal{0,1};
 
   std::vector<std::vector<float>> a; // the random projection vectors, in row major order
@@ -139,7 +141,7 @@ std::pair<std::vector<std::pair<uint64_t, size_t>>, size_t> build_index(std::vec
   size_t coord_grid_bits = 0;
   for (size_t i=0; i<m; i++) {
     float e = maxcoord[i] - mincoord[i];
-    uint64_t ncells = (uint64_t) std::ceilf(e / w);
+    uint64_t ncells = (uint64_t) std::ceil(e / w);
     std::cerr << "extent of projected coordinate " << i 
               << " is " << e << " (" << mincoord[i] << " to " << maxcoord[i] << ")"
               << ", divided in " 
@@ -162,7 +164,6 @@ std::pair<std::vector<std::pair<uint64_t, size_t>>, size_t> build_index(std::vec
     for (size_t coord = i*m; coord < (i+1)*m; coord++) {
       float proj = projections[coord];
       uint64_t h = (uint64_t) std::floor((proj - mincoord[coord % m]) / w);
-      assert(h < maxvalid);
       gridded.push_back(h);
     }
     uint64_t z = zorder(gridded, coord_grid_bits);
@@ -191,6 +192,16 @@ std::pair<size_t, size_t> find_segment(std::vector<std::pair<uint64_t, size_t>> 
   return std::make_pair(from, to);
 }
 
+void merge(std::vector<Pair> & a, std::vector<Pair> & b, size_t k) {
+  for (Pair p : b) {
+    a.push_back(p);
+    if (a.size() > k) {
+      std::pop_heap(a.begin(), a.end(), cmp_pairs);
+      a.pop_back();
+    }
+  }
+}
+
 std::vector<Pair> cp3(
   std::vector<std::vector<float>> &dataset, 
   std::vector<std::pair<uint64_t, size_t>> & index, 
@@ -198,25 +209,31 @@ std::vector<Pair> cp3(
   size_t m, 
   size_t coord_grid_bits)
 {
-  std::vector<Pair> result;
+  int nthreads = omp_get_max_threads();
+  std::vector<std::vector<Pair>> tl_result(nthreads);
 
   std::pair<size_t, size_t> current = find_segment(index, 0);
   while (current.first < index.size()) {
     std::cerr << " current block from " << current.first << " to " << current.second << " with " << (current.second - current.first) << " elements" << std::endl;
     // Self join of the current node
+    #pragma omp parallel for
     for (size_t i=current.first; i < current.second; i++) {
+      int tid = omp_get_thread_num();
       auto & a = dataset[index[i].second];
       for (size_t j=i+1; j < current.second; j++) {
         auto & b = dataset[index[j].second];
         float d = euclidean(a, b);
-        result.push_back(Pair{index[i].second, index[j].second, d});
-        std::push_heap(result.begin(), result.end(), cmp_pairs);
+        tl_result[tid].push_back(Pair{index[i].second, index[j].second, d});
+        std::push_heap(tl_result[tid].begin(), tl_result[tid].end(), cmp_pairs);
 
-        if (result.size() > k) {
-          std::pop_heap(result.begin(), result.end(), cmp_pairs);
-          result.pop_back();
+        if (tl_result[tid].size() > k) {
+          std::pop_heap(tl_result[tid].begin(), tl_result[tid].end(), cmp_pairs);
+          tl_result[tid].pop_back();
         }
       }
+    }
+    for(int tid=1; tid < nthreads; tid++) {
+      merge(tl_result[0], tl_result[tid], k);
     }
 
     // explore a few of the next nodes
@@ -225,33 +242,38 @@ std::vector<Pair> cp3(
     while (next.first < index.size()) {
       // std::cerr << "   next block from " << next.first << " to " << next.second << " " << std::endl;
       // check if the next segment is too far away
-      if (result.size() == k) {
-        float d = result.front().distance;
+      if (tl_result[0].size() == k) {
+        float d = tl_result[0].front().distance;
         if (d < best) {
           best = d;
           std::cerr << " current best guess " << best << std::endl;
         }
       }
-      float block_bound = std::powf(2.0, 1 + coord_grid_bits - std::floorf(lcp(index[current.first].first, index[next.first].first) / m));
+      float block_bound = std::pow(2.0, 1 + coord_grid_bits - std::floor(lcp(index[current.first].first, index[next.first].first) / m));
       if (best < block_bound) {
         std::cerr << " early stopping loop block bound=" << block_bound << std::endl;
         break;
       }
     
+      #pragma omp parallel for
       for (size_t i=current.first; i < current.second; i++) {
+        int tid = omp_get_thread_num();
         auto & a = dataset[index[i].second];
         for (size_t j=next.first; j < next.second; j++) {
           auto & b = dataset[index[j].second];
 
           float d = euclidean(a, b);
-          result.push_back(Pair{index[i].second, index[j].second, d});
-          std::push_heap(result.begin(), result.end(), cmp_pairs);
+          tl_result[tid].push_back(Pair{index[i].second, index[j].second, d});
+          std::push_heap(tl_result[tid].begin(), tl_result[tid].end(), cmp_pairs);
 
-          if (result.size() > k) {
-            std::pop_heap(result.begin(), result.end(), cmp_pairs);
-            result.pop_back();
+          if (tl_result[tid].size() > k) {
+            std::pop_heap(tl_result[tid].begin(), tl_result[tid].end(), cmp_pairs);
+            tl_result[tid].pop_back();
           }
         }
+      }
+      for(int tid=1; tid < nthreads; tid++) {
+        merge(tl_result[0], tl_result[tid], k);
       }
 
       // go to the next block
@@ -260,7 +282,11 @@ std::vector<Pair> cp3(
     current = find_segment(index, current.second);
   }
 
-  return result;
+  for(int tid=1; tid < nthreads; tid++) {
+    merge(tl_result[0], tl_result[tid], k);
+  }
+
+  return tl_result[0];
 }
 
 
@@ -297,13 +323,12 @@ int main(void) {
     // Read the dataset
     expect("data");
     expect("cosine");
-    // std::cerr << "[c++] receiving data" << std::endl;
+    std::cerr << "[c++] receiving data" << std::endl;
     auto dataset = read_float_vectors_hdf5(true);
     std::cerr << "Loaded " << dataset.size() << " vectors of dimension " << dataset[0].size() << std::endl;
     send("ok");
 
     expect("index");
-    // TODO
     auto index_pair = build_index(dataset, m, w, seed);
     send("ok");
 

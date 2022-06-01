@@ -1,5 +1,12 @@
 set dotenv-load
 
+check:
+  cmake --build build --config RelWithDebInfo --target PuffinnJoin
+  build/PuffinnJoin < instructions.txt > /dev/null
+
+cache-misses exe:
+  sudo perf record -e cache-misses -p $(pgrep {{exe}})
+
 # produce a flamegraph.svg file
 profile exec: install-flamegraph
   flamegraph --root -p $(pgrep {{exec}})
@@ -25,6 +32,8 @@ sqlite:
 
 run:
   cmake --build build --config RelWithDebInfo --target PuffinnJoin
+  cmake --build build --config RelWithDebInfo --target LSBTree
+  cmake --build build --config RelWithDebInfo --target XiaoEtAl
   env TOPK_DIR=/mnt/large_storage/topk-join/ python3 join-experiments/run.py
 
 plot:

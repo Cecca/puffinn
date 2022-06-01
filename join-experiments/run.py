@@ -29,6 +29,8 @@ import faiss
 import falconn
 import json
 import random
+import numba
+import heapq
 from urllib.request import urlopen
 from urllib.request import urlretrieve
 
@@ -80,6 +82,17 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE main ADD COLUMN algorithm_version INT DEFAULT 1;
+    """,
+    """
+    CREATE VIEW recent_versions AS
+    SELECT algorithm, max(algorithm_version) as algorithm_version
+    FROM main
+    GROUP BY 1;
+
+    CREATE VIEW recent AS
+    SELECT *
+    FROM main
+    NATURAL JOIN recent_versions;
     """
 ]
 
@@ -115,48 +128,91 @@ def already_run(db, configuration):
     """, configuration).fetchall()
     return len(res) > 0
 
-
-def compute_recalls(db):
-    # Local topk
-    missing_recalls = db.execute("SELECT rowid, algorithm, params, dataset, k, output_file, hdf5_group FROM main WHERE recall IS NULL AND WORKLOAD = 'local-top-k';").fetchall()
-    for rowid, algorithm, params, dataset, k, output_file, hdf5_group in missing_recalls:
-        print("Computing recalls for {} {} on {} with k={}".format(algorithm, params, dataset, k))
-        baseline = db.execute(
-            "SELECT output_file, hdf5_group FROM baselines WHERE dataset = :dataset AND workload = 'local-top-k';",
-            {"dataset": dataset}
-        ).fetchone()
-        if baseline is None:
-            print("Missing baseline")
-            continue
-        base_file, base_group = baseline
-        base_file = os.path.join(BASE_DIR, base_file)
-        output_file = os.path.join(BASE_DIR, output_file)
-        print("output file", output_file, "rowid", rowid, "group", hdf5_group)
-        with h5py.File(base_file) as hfp:
-            baseline_indices = hfp[base_group]['local-top-1000'][:,:k]
-        with h5py.File(output_file) as hfp:
-            actual_indices = np.array(hfp[hdf5_group]['local-top-{}'.format(k)])
-        assert baseline_indices.shape[1] == actual_indices.shape[1]
-        # If we have fewer rows we used a prefix for the evaluation
-        assert baseline_indices.shape[0] <= actual_indices.shape[0]
-        print(
-            "Indices",
-            baseline_indices[0],
-            actual_indices[0],
-            sep="\n"
-        )
-        recalls = np.array([
-            np.mean(np.isin(baseline_indices[i], actual_indices[i]))
-            for i in tqdm(range(len(baseline_indices)), leave=False)
-        ])
-        print("Recalls are", recalls)
+def compute_recall(k, baseline_indices, actual_indices, output_file=None, hdf5_group=None):
+    baseline_indices = baseline_indices[:,:k]
+    assert baseline_indices.shape[1] == actual_indices.shape[1]
+    # If we have fewer rows we used a prefix for the evaluation
+    assert baseline_indices.shape[0] <= actual_indices.shape[0]
+    print(
+        "Indices",
+        baseline_indices[0],
+        actual_indices[0],
+        sep="\n"
+    )
+    recalls = np.array([
+        np.mean(np.isin(baseline_indices[i], actual_indices[i]))
+        for i in tqdm(range(len(baseline_indices)), leave=False)
+    ])
+    if output_file is not None:
         with h5py.File(output_file, 'r+') as hfp:
             gpath = 'local-top-{}-recalls'.format(k)
             if gpath in hfp[hdf5_group]:
                 print('deleting existing recall matrix', gpath)
                 del hfp[hdf5_group][gpath]
             hfp[hdf5_group][gpath] = recalls
-        avg_recall = np.mean(recalls)
+    avg_recall = np.mean(recalls)
+    return avg_recall
+
+
+@numba.jit
+def jaccard(a, b):
+    if len(a) == 0 or len(b) == 0:
+         return 0
+    intersect = len(set(a) & set(b))
+    return intersect / (float)(len(a) + len(b) - intersect)
+
+
+def compute_distances(k, dataset, distancefn):
+    if distancefn == 'angular' or distancefn == 'cosine':
+        norms = np.linalg.norm(dataset, axis=1)[:, np.newaxis]
+        assert np.sum(norms == 0.0) == 0
+        dataset /= norms
+        index = faiss.IndexFlatIP(dataset.shape[1])
+        index.add(dataset)
+        all_distances, all_neighbors = index.search(dataset, k+1)
+        avg_distances = np.mean(all_distances, axis=1)
+        distances = all_distances[:, 1:]
+        neighbors = all_neighbors[:, 1:]
+        return distances, neighbors, avg_distances
+    if distancefn == 'jaccard':
+        import scipy
+        from scipy.spatial.distance import pdist
+        dataset = np.array(dataset)
+        print(dataset)
+        distances = pdist(np.array(dataset), jaccard)
+        print(distances)
+    else:
+        raise Exception("unsupported similarity measure {}".format(distancefn))
+
+
+def get_baseline_indices(db, dataset, k):
+    baseline = db.execute(
+        "SELECT output_file, hdf5_group FROM baselines WHERE dataset = :dataset AND workload = 'local-top-k';",
+        {"dataset": dataset}
+    ).fetchone()
+    if baseline is None:
+        print("Missing baseline")
+        return None
+    base_file, base_group = baseline
+    base_file = os.path.join(BASE_DIR, base_file)
+    with h5py.File(base_file) as hfp:
+        baseline_indices = hfp[base_group]['local-top-1000'][:,:k]
+        return baseline_indices
+
+def compute_recalls(db):
+    # Local topk
+    missing_recalls = db.execute("SELECT rowid, algorithm, params, dataset, k, output_file, hdf5_group FROM main WHERE recall IS NULL AND WORKLOAD = 'local-top-k';").fetchall()
+    for rowid, algorithm, params, dataset, k, output_file, hdf5_group in missing_recalls:
+        print("Computing recalls for {} {} on {} with k={}".format(algorithm, params, dataset, k))
+        baseline_indices = get_baseline_indices(db, dataset, k)
+        if baseline_indices is None:
+            print("Missing baseline")
+            continue
+        output_file = os.path.join(BASE_DIR, output_file)
+        print("output file", output_file, "rowid", rowid, "group", hdf5_group)
+        with h5py.File(output_file) as hfp:
+            actual_indices = np.array(hfp[hdf5_group]['local-top-{}'.format(k)])
+        avg_recall = compute_recall(k, baseline_indices, actual_indices, output_file, hdf5_group)
         print("Average recall is", avg_recall)
         db.execute(
             """UPDATE main
@@ -165,25 +221,52 @@ def compute_recalls(db):
             """,
             {"rowid": rowid, "recall": avg_recall}
         )
+
     # Global topk
     missing_recalls = db.execute("SELECT rowid, algorithm, params, dataset, k, output_file, hdf5_group FROM main WHERE recall IS NULL AND WORKLOAD = 'global-top-k';").fetchall()
     for rowid, algorithm, params, dataset, k, output_file, hdf5_group in missing_recalls:
+        # Compute the top-1000 distances for the dataset, if they are not already there
+        dist_key, nn_key = '/top-1000-dists', '/top-1000-neighbors'
+        top_pairs_key = '/top-1000-pairs'
+
+        dataset_path = DATASETS[dataset]()
+        with h5py.File(dataset_path, 'r+') as hfp:
+            if dist_key not in hfp or nn_key not in hfp:
+                print('Computing top distances for', dataset_path)
+                distances, neighbors, avg_distance = compute_distances(1000, hfp['/train'], hfp.attrs['distance'])
+                hfp[dist_key] = distances
+                hfp[nn_key] = neighbors
+                hfp['/average_distance'] = avg_distance
+            if top_pairs_key not in hfp:
+                print('Computing top 1000 pairs')
+                distances = hfp[dist_key]
+                neighbors = hfp[nn_key]
+                topk = []
+                for i, (dists, neighs) in tqdm(enumerate(zip(distances, neighbors)), total=neighbors.shape[0]):
+                    for d, j in zip(dists, neighs):
+                        if i != j:
+                            t = (d, min(i, j), max(i, j))
+                            if len(topk) > 2000:
+                                heapq.heappushpop(topk, t)
+                            else:
+                                heapq.heappush(topk, t)
+                topk = list(set(topk)) # remove duplicates
+                topk.sort(reverse=True)
+                topk = topk[:1000]
+                hfp[top_pairs_key] = topk
+
+            baseline_pairs = set([(min(pair[0], pair[1]), max(pair[0], pair[1])) for pair in hfp[top_pairs_key][:k, 1:3].astype(np.int32)])
+            baseline_dists = hfp[top_pairs_key][:k, 0]
+
+
         print("Computing recalls for {} {} on {} with k={}".format(algorithm, params, dataset, k))
-        baseline = db.execute(
-            "SELECT output_file, hdf5_group FROM baselines_global WHERE dataset = :dataset AND k = :k AND workload = 'global-top-k';",
-            {"dataset": dataset, "k": k}
-        ).fetchone()
-        if baseline is None:
-            print("Missing baseline for global-top-k")
-            continue
-        print(baseline)
-        base_file, base_group = baseline
-        base_file = os.path.join(BASE_DIR, base_file)
+        print(baseline_pairs)
+        print(baseline_dists)
         output_file = os.path.join(BASE_DIR, output_file)
-        with h5py.File(base_file) as hfp:
-            baseline_pairs = set(map(tuple, hfp[base_group]['global-top-{}'.format(k)]))
         with h5py.File(output_file) as hfp:
             actual_pairs = set(map(tuple, hfp[hdf5_group]['global-top-{}'.format(k)]))
+        print("Actual pairs")
+        print(actual_pairs)
         matched = 0
         for pair in baseline_pairs:
             if pair in actual_pairs:
@@ -294,10 +377,11 @@ class Algorithm(object):
     def save_result(self, hdf5_file, path):
         result = self.result()
         if path in hdf5_file:
-            existing = np.array(hdf5_file[path])
-            print(existing)
-            assert (existing == result).all()
-            return
+            del hdf5_file[path]
+        #     existing = np.array(hdf5_file[path])
+        #     print(existing)
+        #     assert (existing == result).all()
+        #     return
         hdf5_file[path] = result
     def times(self):
         """Returns the pair (index_time, workload_time)"""
@@ -361,6 +445,8 @@ class SubprocessAlgorithm(Algorithm):
 
     def feed_data(self, h5py_path):
         distance = h5py.File(h5py_path).attrs['distance']
+        if distance == "angular":
+            distance = "cosine"
         self._send("data")
         self._send(distance)
         program = self._subprocess_handle()
@@ -392,7 +478,9 @@ class SubprocessAlgorithm(Algorithm):
             line = self._raw_line()
             if line[1] == "end":
                 break
-            rows.append(np.array([int(i) for i in line]))
+            row = np.array([int(i) for i in line])
+            assert np.unique(row).shape == row.shape
+            rows.append(row)
         rows = np.array(rows)
         print("Waiting for subprocess to finish")
         self._wait_for_completion()
@@ -954,14 +1042,15 @@ DATASETS = {
 
 # Stores lazily the algorithm (i.e. as funcions to be called) along with their version
 ALGORITHMS = {
-    'PUFFINN':         lambda: (SubprocessAlgorithm(["build/PuffinnJoin"]), 2),
+    'PUFFINN':         lambda: (SubprocessAlgorithm(["build/PuffinnJoin"]), 4),
     # Local top-k baselines
     'BruteForceLocal': lambda: (BruteForceLocal(),                          1),
     'faiss-HNSW':      lambda: (FaissHNSW(),                                1),
     'faiss-IVF':       lambda: (FaissIVF(),                                 1),
     'falconn':    lambda: (FALCONN(),                                   2),
     # Global top-k baselines
-    'XiaoEtAl':        lambda: (SubprocessAlgorithm(["build/XiaoEtAl"]),    1)
+    'XiaoEtAl':        lambda: (SubprocessAlgorithm(["build/XiaoEtAl"]),    1),
+    'LSBTree':         lambda: (SubprocessAlgorithm(["build/LSBTree"]),     1)
 }
 
 # =============================================================================
@@ -993,9 +1082,9 @@ def get_output_file(configuration):
     return fname, params_hash, group
 
 
-def run_config(configuration):
+def run_config(configuration, debug=False):
     db = get_db()
-    if already_run(db, configuration):
+    if not debug and already_run(db, configuration):
         print("Configuration already run, skipping")
         return
     output_file, group, output = get_output_file(configuration)
@@ -1026,43 +1115,51 @@ def run_config(configuration):
     )
     print("   time to index", time_index)
     print("   time for join", time_workload)
-    db.execute("""
-    INSERT INTO main VALUES (
-        :dataset,
-        :workload,
-        :k,
-        :algorithm,
-        :params,
-        :threads,
-        :time_index_s,
-        :time_join_s,
-        :recall,
-        :output_file,
-        :hdf5_group,
-        :algorithm_version
-    );
-    """, {
-        "dataset": configuration['dataset'],
-        'workload': configuration['workload'],
-        'k': k,
-        'algorithm': configuration['algorithm'],
-        'algorithm_version': version,
-        'threads': configuration.get('threads', 1),
-        'params': json.dumps(params, sort_keys=True),
-        'time_index_s': time_index,
-        'time_join_s': time_workload,
-        'recall': None,
-        'output_file': output_file,
-        'hdf5_group': group
-    })
+    if not debug:
+        db.execute("""
+        INSERT INTO main VALUES (
+            :dataset,
+            :workload,
+            :k,
+            :algorithm,
+            :params,
+            :threads,
+            :time_index_s,
+            :time_join_s,
+            :recall,
+            :output_file,
+            :hdf5_group,
+            :algorithm_version
+        );
+        """, {
+            "dataset": configuration['dataset'],
+            'workload': configuration['workload'],
+            'k': k,
+            'algorithm': configuration['algorithm'],
+            'algorithm_version': version,
+            'threads': configuration.get('threads', 1),
+            'params': json.dumps(params, sort_keys=True),
+            'time_index_s': time_index,
+            'time_join_s': time_workload,
+            'recall': None,
+            'output_file': output_file,
+            'hdf5_group': group
+        })
+    else:
+        # Compute the recall and display it.
+        baseline = get_baseline_indices(db, configuration['dataset'], k)
+        with h5py.File(os.path.join(BASE_DIR, output_file), 'r') as hfp:
+            actual_indices = np.array(hfp[group]['local-top-{}'.format(k)])
+            avg_recall = compute_recall(k, baseline, actual_indices)
+            print("Average recall", avg_recall)
 
 
 if __name__ == "__main__":
     if not os.path.isdir(BASE_DIR):
         os.mkdir(BASE_DIR)
 
-    with get_db() as db:
-        compute_recalls(db)
+    # with get_db() as db:
+    #     compute_recalls(db)
 
     # run_config({
     #     'dataset': 'NYTimes',
@@ -1100,8 +1197,24 @@ if __name__ == "__main__":
     #         'params': {}
     #     })
 
-    for dataset in ['random-float-10k']:
-    # for dataset in ['NYTimes', 'glove-25', 'DeepImage']:
+    # ----------------------------------------------------------------------
+    # LSB-Tree global top-k
+    for dataset in ['glove-25']:
+        for k in [10]:
+            for m in [4, 8, 16]:
+                for w in [1, 2, 4]:
+                    run_config({
+                        'dataset': dataset,
+                        'workload': 'global-top-k',
+                        'k': k,
+                        'algorithm': 'LSBTree',
+                        'params': {
+                            'm': m,
+                            'w': w
+                        }
+                    })
+
+    for dataset in ['DBLP', 'NYTimes', 'glove-25', 'DeepImage']:
         # ----------------------------------------------------------------------
         # Faiss-HNSW
         # for M in [4, 8, 16, 32, 64, 128, 256, 512, 1024]:
@@ -1141,20 +1254,6 @@ if __name__ == "__main__":
         # PUFFINN local top-k
         # for hash_source in ['Independent']:
         #     for recall in [0.8, 0.9]:
-        #         for space_usage in [8192, 16384, 32768]:
-        #             run_config({
-        #                 'dataset': dataset,
-        #                 'workload': 'local-top-k',
-        #                 'k': 10,
-        #                 'algorithm': 'PUFFINN',
-        #                 'threads': threads,
-        #                 'params': {
-        #                     'method': 'LSHJoin',
-        #                     'recall': recall,
-        #                     'space_usage': space_usage,
-        #                     'hash_source': hash_source
-        #                 }
-        #             })
 
         for L in [5, 10, 50, 100]:
             for num_probes in [L, 2 * L, 5 * L, 10 * L]:
@@ -1171,19 +1270,43 @@ if __name__ == "__main__":
                     }
                 })
 
-    # run_config({
-    #     'dataset': 'glove-25',
-    #     'workload': 'local-top-k',
-    #     'k': 5,
-    #     'algorithm': 'PUFFINN',
-    #     'threads': threads,
-    #     'params': {
-    #         'method': 'LSHJoin',
-    #         'recall': 0.9,
-    #         'space_usage': 1024
-    #     }
-    # })
+        #         for space_usage in [256, 512, 1024, 2048, 4096]:
+        #             if dataset != 'DeepImage' or space_usage >= 32768:
+        #                 run_config({
+        #                     'dataset': dataset,
+        #                     'workload': 'local-top-k',
+        #                     'k': 10,
+        #                     'algorithm': 'PUFFINN',
+        #                     'threads': threads,
+        #                     'params': {
+        #                         'method': 'LSHJoin',
+        #                         'recall': recall,
+        #                         'space_usage': space_usage,
+        #                         'hash_source': hash_source
+        #                     }
+        #                 })
 
-    with get_db() as db:
-        compute_recalls(db)
+
+        # ----------------------------------------------------------------------
+        # PUFFINN global top-k
+        for hash_source in ['Independent']:
+            for recall in [0.8, 0.9]:
+                for space_usage in [512, 1024, 2048]:
+                    if dataset != 'DeepImage' or space_usage >= 16384:
+                        run_config({
+                            'dataset': dataset,
+                            'workload': 'global-top-k',
+                            'k': 10,
+                            'algorithm': 'PUFFINN',
+                            'threads': threads,
+                            'params': {
+                                'method': 'LSHJoinGlobal',
+                                'recall': recall,
+                                'space_usage': space_usage,
+                                'hash_source': hash_source
+                            }
+                        })
+
+    # with get_db() as db:
+    #     compute_recalls(db)
 

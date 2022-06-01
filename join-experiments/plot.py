@@ -48,7 +48,12 @@ def get_pareto(data):
 
 def plot_local_topk():
     db = get_db()
-    all = pd.read_sql("select dataset, workload, k, algorithm, params, threads, json_extract(params, '$.hash_source') as hash_source, recall, time_index_s, time_join_s, time_index_s + time_join_s as time_total_s from main where json_extract(params, '$.prefix') is null;", db)
+    all = pd.read_sql("""
+        select dataset, workload, k, algorithm, algorithm_version, params, threads, json_extract(params, '$.hash_source') as hash_source, 
+               recall, time_index_s, time_join_s, time_index_s + time_join_s as time_total_s 
+        from recent 
+         where json_extract(params, '$.prefix') is null;
+        """, db)
     all = all.fillna(value={'hash_source': ''})
     all['algorithm'] = all['algorithm'] + all['hash_source']
     print(all)
@@ -56,7 +61,7 @@ def plot_local_topk():
 
     datasets = [
         t[0]
-        for t in db.execute("select distinct dataset from main order by 1;").fetchall()
+        for t in db.execute("select distinct dataset from recent order by 1;").fetchall()
     ]
 
     input_dropdown = alt.binding_select(options=datasets, name='Dataset: ')
