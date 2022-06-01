@@ -8,6 +8,7 @@
 # Datasets are taken from ann-benchmarks or created ad-hoc from
 # other sources (e.g. DBLP).
 
+import concurrent.futures
 import gzip
 import urllib.request
 import zipfile
@@ -24,6 +25,8 @@ import shlex
 import os
 import hashlib
 import sqlite3
+import faiss
+import falconn
 import json
 import random
 from urllib.request import urlopen
@@ -503,11 +506,10 @@ class FaissHNSW(Algorithm):
         return self.time_index, self.time_run
 
 
-class MPLSH(Algorithm):
-    import nmslib
+class FALCONN(Algorithm):
 
     def __init__(self):
-        self.index = None
+        self._index = None
         self.k = None
         self.params = None
         self.data = None
@@ -519,7 +521,6 @@ class MPLSH(Algorithm):
         """Configure the parameters of the algorithm"""
         self.k = k
         self.params = params
-        #faiss.omp_set_num_threads(params['threads'])
 
     def feed_data(self, h5py_path):
         """Pass the data to the algorithm"""
@@ -527,34 +528,61 @@ class MPLSH(Algorithm):
         assert f.attrs['distance'] == 'cosine' or f.attrs['distance'] == 'angular'
         self.data = np.array(f['train'])
         f.close()
-    def encode(d):
-        return ["%s=%s" % (a, b) for (a, b) in d.iteritems()]
 
     def index(self):
         """Setup the index, if any. This is timed."""
         print("  Building index")
         start = time.time()
+
         X = sklearn.preprocessing.normalize(self.data, axis=1, norm='l2')
-
-        self.index = nmslib.init("cosinesimil", [], self.params["method_name"], nmslib.DataType.DENSE_VECTOR, nmslib.DistType.FLOAT)
-
-
         if X.dtype != np.float32:
             X = X.astype(np.float32)
-        for i, x in enumerate(X):
-            nmslib.addDataPoint(self.index, x.tolist())
 
-        nmslib.createIndex(self.index, self.encode(self.params["params"]))
-  
+        params_cp = falconn.LSHConstructionParameters()
+        params_cp.dimension = X.shape[1]
+        params_cp.lsh_family = falconn.LSHFamily.CrossPolytope
+        params_cp.distance_function = falconn.DistanceFunction.NegativeInnerProduct
+        params_cp.storage_hash_table = falconn.StorageHashTable.FlatHashTable
+        params_cp.k = self.params["k"]
+        params_cp.l = self.params["L"]
+        params_cp.num_setup_threads = 0
+        params_cp.last_cp_dimension = 16
+        params_cp.num_rotations = 3
+        params_cp.seed = 833840234
+
+
+        self._index = falconn.LSHIndex(params_cp)
+        self._index.setup(X)
         self.time_index = time.time() - start
+
+    def _run_individual_query(self, query):
+        qo = self._index.construct_query_object()
+        qo.set_num_probes(self.params["num_probes"])
+        res = qo.find_k_nearest_neighbors(query, self.k + 1)
+        if len(res) < self.k + 1:
+            res += [0] * (self.k + 1 - len(res))
+        return res
 
     def run(self):
         """Run the workload. This is timed."""
         print("  Top-{} join".format(self.k))
         start = time.time()
-        _dists, idxs = nmslib.knnQuery(self.index, self.k + 1, )
+        X = sklearn.preprocessing.normalize(self.data, axis=1, norm='l2')
+        if X.dtype != np.float32:
+            X = X.astype(np.float32)
+        self.result_indices = np.zeros((X.shape[0], self.k + 1))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.params["threads"]) as executor:
+            tasks = {executor.submit(self._run_individual_query, query): i for (i, query) in enumerate(X)}
+            for future in concurrent.futures.as_completed(tasks):
+                i = tasks[future]
+                res = future.result()
+                self.result_indices[i] = res
+
+        #for (i, query) in enumerate(X):
+        #    self.result_indices[i] = self._run_individual_query(query)
+
         self.time_run = time.time() - start
-        self.result_indices = idxs[:,1:]
+        self.result_indices = self.result_indices[:,1:]
 
     def result(self):
         return self.result_indices
@@ -639,7 +667,7 @@ def write_dense(out_fn, vecs):
 # Adapted from ann-benchmarks
 def random_jaccard(out_fn, n=10000, size=50, universe=80):
     if os.path.isfile(out_fn):
-        return
+        return out_fn
     random.seed(1)
     l = list(range(universe))
     # We call the set of sets `train` to be compatible with datasets from
@@ -654,12 +682,14 @@ def random_jaccard(out_fn, n=10000, size=50, universe=80):
 def random_float(out_fn, n_dims, n_samples, centers):
     import sklearn.datasets
     if os.path.isfile(out_fn):
-        return
+        return out_fn
 
     X, _ = sklearn.datasets.make_blobs(
         n_samples=n_samples, n_features=n_dims,
         centers=centers, random_state=1)
+    X = X.astype(np.float32)
     write_dense(out_fn, X)
+    return out_fn
 
 
 def glove(out_fn, dims):
@@ -929,7 +959,7 @@ ALGORITHMS = {
     'BruteForceLocal': lambda: (BruteForceLocal(),                          1),
     'faiss-HNSW':      lambda: (FaissHNSW(),                                1),
     'faiss-IVF':       lambda: (FaissIVF(),                                 1),
-    'nmslib-MPLSH':    lambda: (MPLSH(),                                   1),
+    'falconn':    lambda: (FALCONN(),                                   2),
     # Global top-k baselines
     'XiaoEtAl':        lambda: (SubprocessAlgorithm(["build/XiaoEtAl"]),    1)
 }
@@ -956,7 +986,9 @@ def get_output_file(configuration):
     params_hash = hashlib.sha256(params_string.encode('utf-8')).hexdigest()
     h5obj = h5py.File(os.path.join(BASE_DIR, fname), 'a')
     group = h5obj.require_group(params_hash)
+    print(params_list)
     for key, value in params_list:
+        print(key, value)
         group.attrs[key] = value
     return fname, params_hash, group
 
@@ -1047,6 +1079,13 @@ if __name__ == "__main__":
     #     'algorithm': 'BruteForceLocal',
     #     'params': {'prefix': 10000}
     # })
+    run_config({
+        'dataset': 'random-float-10k',
+        'workload': 'local-top-k',
+        'k': 1000,
+        'algorithm': 'BruteForceLocal',
+        'params': {}
+    })
 
     threads = 56
 
@@ -1061,7 +1100,7 @@ if __name__ == "__main__":
     #         'params': {}
     #     })
 
-    for dataset in ['random-float']:
+    for dataset in ['random-float-10k']:
     # for dataset in ['NYTimes', 'glove-25', 'DeepImage']:
         # ----------------------------------------------------------------------
         # Faiss-HNSW
@@ -1116,20 +1155,19 @@ if __name__ == "__main__":
         #                     'hash_source': hash_source
         #                 }
         #             })
-        
-        for recall in [0.8, 0.9]:
-            for L in [50, 100]:
+
+        for L in [5, 10, 50, 100]:
+            for num_probes in [L, 2 * L, 5 * L, 10 * L]:
                 run_config({
                     'dataset': dataset,
                     'workload': 'local-top-k',
                     'k': 10,
-                    'algorithm': 'MPLSH',
+                    'algorithm': 'falconn',
                     'threads': threads,
                     'params': {
-                        'method': 'lsh_multiprobe',
-                        'parameters' : {
-                            "H": 1200001, "T": 10, "L": L, "tuneK": 10
-                        }
+                        "k": 3,
+                        "L": L,
+                        "num_probes": num_probes,
                     }
                 })
 
