@@ -2,6 +2,7 @@
 
 #include "puffinn/dataset.hpp"
 #include "puffinn/filterer.hpp"
+#include "puffinn/sketch.hpp"
 #include "puffinn/hash_source/deserialize.hpp"
 #include "puffinn/hash_source/hash_source.hpp"
 #include "puffinn/hash_source/independent.hpp"
@@ -325,7 +326,12 @@ namespace puffinn {
                 this->hash_source->hash_repetitions(dataset[idx], hash_values);
                 // Copy the hash values in the appropriate prefix maps
                 for (size_t map_idx = 0; map_idx < lsh_maps.size(); map_idx++) {
-                    lsh_maps[map_idx].insert(tid, idx, hash_values[map_idx]);
+                    lsh_maps[map_idx].insert(
+                        tid, 
+                        idx, 
+                        hash_values[map_idx], 
+                        puffinn::Sketch<puffinn::DEFAULT_SKETCH_BITS>::build_from(filterer, idx)
+                    );
                 }
             }
             g_performance_metrics.store_time(Computation::IndexHashing);
@@ -649,6 +655,7 @@ namespace puffinn {
             std::vector<std::vector<uint32_t>> res;
 
             bool has_sketches = filterer.size() > 0;
+            assert(has_sketches);
 
             g_performance_metrics.new_query();
             g_performance_metrics.start_timer(Computation::Total);
@@ -762,6 +769,10 @@ namespace puffinn {
                             }
                             if (left_active > 0 || actual_active > 0) {
                                 for (auto r = segments[i][j-1]; r < segments[i][j]; r++) {
+                                    auto R = lsh_maps[i].indices[r];
+                                    auto R_sketch = lsh_maps[i].sketches[r];
+                                    float R_smallest = tl_maxbuffers[tid].smallest_value(R);
+
                                     for (auto  s = segments[i][j]; s < segments[i][j + 1]; s++) {
                                         // NOTE: profiling using perf shows that a lot of time (like 11%) in later iterations
                                         // is spent waiting for these two accesses. This is also the hottest spot in terms of cache misses.
@@ -770,7 +781,6 @@ namespace puffinn {
                                         // computations, so much that for the smallest prefixes the throughput (in terms of
                                         // distances per second) is orders of magnitude smaller than the throughput 
                                         // for longer prefixes.
-                                        auto R = lsh_maps[i].indices[r];
                                         auto S = lsh_maps[i].indices[s];
 
                                         if (R == S) {
@@ -781,19 +791,13 @@ namespace puffinn {
                                             continue;
                                         }
 
-                                        if (has_sketches) {
-                                            float R_smallest = tl_maxbuffers[tid].smallest_value(R);
-                                            float S_smallest = tl_maxbuffers[tid].smallest_value(S);
-                                            auto sketch_sim_ub = filterer.similarity_upper_bound(R, S, 0.01);
-                                            if (sketch_sim_ub >= R_smallest || sketch_sim_ub >= S_smallest) {
-                                                auto sim = TSim::compute_similarity(
-                                                    dataset[R], 
-                                                    dataset[S], 
-                                                    dataset.get_description());
-                                                tl_maxbuffers[tid].insert(R, S, sim);
-                                                tl_maxbuffers[tid].insert(S, R, sim);
-                                            }
-                                        } else {
+                                        auto S_sketch = lsh_maps[i].sketches[s];
+
+                                        float S_smallest = tl_maxbuffers[tid].smallest_value(S);
+                                        auto sketch_prob_ub = R_sketch.collision_probability_upper_bound(S_sketch, 0.01);
+                                        // auto sketch_sim_ub = filterer.similarity_upper_bound(R, S, 0.01);
+                                        auto sketch_sim_ub = filterer.hash_source->icollision_probability(sketch_prob_ub);
+                                        if (sketch_sim_ub >= R_smallest || sketch_sim_ub >= S_smallest) {
                                             auto sim = TSim::compute_similarity(
                                                 dataset[R], 
                                                 dataset[S], 

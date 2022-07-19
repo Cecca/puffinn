@@ -33,6 +33,7 @@ namespace puffinn {
 
     template <typename T>
     class Filterer {
+    public:
         std::unique_ptr<HashSource<T>> hash_source;
         // Filter hash functions
         std::vector<std::unique_ptr<Hash>> hash_functions;

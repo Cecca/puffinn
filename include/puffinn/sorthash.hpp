@@ -130,18 +130,19 @@ void sort_hashes_24(std::vector<uint32_t> & hashes, std::vector<uint32_t> & out)
 //! In this sort routine, the indices provided in the `idx_in` argument are considered
 //! as forming a pair with the hashes in `hashes_in`, and will be sorted along with them
 //! as if we were sorting an array of std::pair using the hash as key.
+template<typename V>
 void sort_hashes_pairs_24(
     std::vector<uint32_t> & hashes_in,
     std::vector<uint32_t> & hashes_out,
-    std::vector<uint32_t> & idx_in,
-    std::vector<uint32_t> & idx_out
+    std::vector<V> & idx_in,
+    std::vector<V> & idx_out
 ) {
     const size_t n = hashes_in.size();
     const size_t n_bytes = 256;
     hashes_out.clear();
     hashes_out.resize(n, 0);
     idx_out.clear();
-    idx_out.resize(n, 0);
+    idx_out.resize(n);
 
     // Histograms on the stack
     uint32_t b0[n_bytes], b1[n_bytes], b2[n_bytes];

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "puffinn/dataset.hpp"
+#include "puffinn/sketch.hpp"
 #include "puffinn/hash_source/hash_source.hpp"
 #include "puffinn/typedefs.hpp"
 #include "puffinn/performance.hpp"
@@ -65,7 +66,7 @@ namespace puffinn {
     // previously queried values are not queried again.
     template <typename T>
     class PrefixMap {
-        using HashedVecIdx = std::pair<uint32_t, LshDatatype>;
+        using RebuildingData = std::tuple<uint32_t, LshDatatype, puffinn::Sketch<puffinn::DEFAULT_SKETCH_BITS>>;
         // Number of bits to precompute locations in the stored vector for.
         const static int PREFIX_INDEX_BITS = 13;
 
@@ -73,9 +74,9 @@ namespace puffinn {
         // contents
         std::vector<uint32_t> indices;
         std::vector<LshDatatype> hashes;
+        std::vector<puffinn::Sketch<puffinn::DEFAULT_SKETCH_BITS>> sketches;
         // Scratch space for use when rebuilding. The length and capacity is set to 0 otherwise.
-        // std::vector<HashedVecIdx> rebuilding_data;
-        std::vector<std::vector<HashedVecIdx>> parallel_rebuilding_data;
+        std::vector<std::vector<RebuildingData>> parallel_rebuilding_data;
 
         // Length of the hash values used.
         unsigned int hash_length;
@@ -112,8 +113,8 @@ namespace puffinn {
             // rebuilding_data.resize(rebuilding_len);
             if (rebuilding_len != 0) {
                 for (size_t i=0; i<rebuilding_len; i++) {
-                    HashedVecIdx v;
-                    in.read(reinterpret_cast<char*>(&v), sizeof(HashedVecIdx));
+                    RebuildingData v;
+                    in.read(reinterpret_cast<char*>(&v), sizeof(RebuildingData));
                     parallel_rebuilding_data[0].push_back(v);
                 }
             }
@@ -141,7 +142,7 @@ namespace puffinn {
             if (rebuilding_len != 0) {
                 for (auto & rd : parallel_rebuilding_data) {
                     for (size_t i = 0; i <rd.size(); i++) {
-                        out.write(reinterpret_cast<const char*>(&rd[i]), sizeof(HashedVecIdx));
+                        out.write(reinterpret_cast<const char*>(&rd[i]), sizeof(RebuildingData));
                     }
                 }
             }
@@ -154,8 +155,8 @@ namespace puffinn {
         }
 
         // Add a hash value, and associated index, to be included next time rebuild is called. 
-        void insert(int tid, uint32_t idx, LshDatatype hash_value) {
-            parallel_rebuilding_data[tid].push_back({ idx, hash_value });
+        void insert(int tid, uint32_t idx, LshDatatype hash_value, puffinn::Sketch<puffinn::DEFAULT_SKETCH_BITS> sketch) {
+            parallel_rebuilding_data[tid].push_back({ idx, hash_value, sketch });
         }
 
         // Reserve the correct amount of memory before inserting.
@@ -178,25 +179,25 @@ namespace puffinn {
             }
 
             std::vector<LshDatatype> tmp_hashes;
-            std::vector<uint32_t> tmp_indices;
+            std::vector<std::pair<uint32_t, puffinn::Sketch<puffinn::DEFAULT_SKETCH_BITS>>> tmp_values;
             std::vector<LshDatatype> out_hashes;
-            std::vector<uint32_t> out_indices;
+            std::vector<std::pair<uint32_t, puffinn::Sketch<puffinn::DEFAULT_SKETCH_BITS>>> out_values;
             tmp_hashes.reserve(hashes.size() + rebuilding_data_size);
-            tmp_indices.reserve(hashes.size() + rebuilding_data_size);
+            tmp_values.reserve(hashes.size() + rebuilding_data_size);
             out_hashes.reserve(hashes.size() + rebuilding_data_size);
-            out_indices.reserve(hashes.size() + rebuilding_data_size);
+            out_values.reserve(hashes.size() + rebuilding_data_size);
 
             if (hashes.size() != 0) {
                 // Move data to temporary vector for sorting.
                 for (size_t i=SEGMENT_SIZE; i < hashes.size()-SEGMENT_SIZE; i++) {
                     tmp_hashes.push_back(hashes[i]);
-                    tmp_indices.push_back(indices[i]);
+                    tmp_values.push_back({indices[i], sketches[i]});
                 }
             }
             for (auto & rebuilding_data : parallel_rebuilding_data) {
-                for (auto pair : rebuilding_data) {
-                    tmp_indices.push_back(pair.first);
-                    tmp_hashes.push_back(pair.second);
+                for (auto tuple : rebuilding_data) {
+                    tmp_hashes.push_back(std::get<1>(tuple));
+                    tmp_values.push_back({std::get<0>(tuple), std::get<2>(tuple)});
                 }
             }
             
@@ -204,8 +205,8 @@ namespace puffinn {
             puffinn::sort_hashes_pairs_24(
                 tmp_hashes,
                 out_hashes,
-                tmp_indices,
-                out_indices
+                tmp_values,
+                out_values
             );
             g_performance_metrics.store_time(Computation::Sorting);
 
@@ -214,17 +215,22 @@ namespace puffinn {
             hashes.reserve(out_hashes.size() + 2*SEGMENT_SIZE);
             indices.clear();
             indices.reserve(out_hashes.size() + 2*SEGMENT_SIZE);
+            sketches.clear();
+            sketches.reserve(out_hashes.size() + 2*SEGMENT_SIZE);
 
             for (int i=0; i < SEGMENT_SIZE; i++) {
                 hashes.push_back(IMPOSSIBLE_PREFIX);
+                sketches.push_back(puffinn::Sketch<puffinn::DEFAULT_SKETCH_BITS>());
                 indices.push_back(0);
             }
             for (size_t i = 0; i < out_hashes.size(); i++) {
-                indices.push_back(out_indices[i]);
+                indices.push_back(out_values[i].first);
+                sketches.push_back(out_values[i].second);
                 hashes.push_back(out_hashes[i]);
             }
             for (int i=0; i < SEGMENT_SIZE; i++) {
                 hashes.push_back(IMPOSSIBLE_PREFIX);
+                sketches.push_back(puffinn::Sketch<puffinn::DEFAULT_SKETCH_BITS>());
                 indices.push_back(0);
             }
 
