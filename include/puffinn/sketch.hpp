@@ -11,7 +11,7 @@
 
 namespace puffinn {
 
-static const int DEFAULT_SKETCH_BITS = 2048;
+static const int DEFAULT_SKETCH_BITS = 64;
 
 template<int Bits>
 class Sketch {
