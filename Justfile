@@ -24,7 +24,8 @@ test:
 
 bench:
   cmake --build build --config RelWithDebInfo --target Bench
-  env OMP_NUM_THREADS=56 build/Bench glove.25d.100k.txt >> bench_results.txt
+  env OMP_NUM_THREADS=56 build/Bench datasets/glove-200-100k.hdf5 >> bench_results.txt
+  cat bench_results.txt
 
 # open the sqlite result database
 sqlite:

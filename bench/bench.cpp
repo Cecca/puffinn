@@ -1,6 +1,9 @@
 #include <nanobench.h>
+#include "highfive/H5Easy.hpp"
 
 #include "puffinn/collection.hpp"
+#include "puffinn/sketch.hpp"
+#include "puffinn/filterer.hpp"
 #include "puffinn/hash/simhash.hpp"
 #include "puffinn/hash/crosspolytope.hpp"
 #include "puffinn/hash_source/pool.hpp"
@@ -229,19 +232,85 @@ void bench_hash(const std::vector<std::vector<float>> & vectors) {
     run_static<puffinn::SimHash>(&bencher, "SimHash (static)", dataset);
 }
 
+void bench_dist_sketch(const std::vector<std::vector<float>> & vectors) {
+    puffinn::Dataset<puffinn::CosineSimilarity::Format> dataset(vectors[0].size());
+    for (auto v : vectors) {
+        dataset.insert(v);
+    }
+    auto desc = dataset.get_description();
+    size_t n = dataset.get_size();
+
+    puffinn::Filterer<puffinn::CosineSimilarity::DefaultSketch> filterer(puffinn::IndependentHashArgs<puffinn::SimHash>(), desc);
+    filterer.add_sketches(dataset, 0);  
+
+    std::vector<puffinn::Sketch<2048>> sketches_2048;
+    for (size_t i=0; i<n; i++) {
+        sketches_2048.push_back(puffinn::Sketch<2048>::build_from(filterer, i));
+    }
+    std::vector<puffinn::Sketch<64>> sketches_64;
+    for (size_t i=0; i<n; i++) {
+        sketches_64.push_back(puffinn::Sketch<64>::build_from(filterer, i));
+    }
+
+    auto bencher = ankerl::nanobench::Bench()
+        .title("Distance and sketch")
+        .minEpochIterations(10000)
+        .timeUnit(std::chrono::nanoseconds(1), "ns");
+
+    bencher.run("Cosine similarity", [&] {
+        ankerl::nanobench::doNotOptimizeAway(
+            puffinn::CosineSimilarity::compute_similarity(dataset[0], dataset[1], desc)
+        );
+    });
+
+    bencher.run("Sketch Hamming distance 2048", [&] {
+        ankerl::nanobench::doNotOptimizeAway(
+            sketches_2048[0].collision_probability_upper_bound(sketches_2048[1], 0.01)
+        );
+    });
+
+    bencher.run("Sketch Hamming distance 64", [&] {
+        ankerl::nanobench::doNotOptimizeAway(
+            sketches_64[0].collision_probability_upper_bound(sketches_64[1], 0.01)
+        );
+    });
+
+}
+
+float norm(std::vector<float> & v) {
+    float n = 0.0;
+    for (auto x : v) {
+        n += x * x;
+    }
+    return n;
+}
+
+
+std::vector<std::vector<float>> read_float_vectors_hdf5(const std::string& path) {
+    H5Easy::File file(path, H5Easy::File::ReadOnly);
+    std::vector<std::vector<float>> data = H5Easy::load<std::vector<std::vector<float>>>(file, "/train");
+    for (size_t i=0; i<data.size(); i++) {
+        float n = norm(data[i]);
+        for (size_t j=0; j<data[i].size(); j++) {
+            data[i][j] /= n;
+        }
+    }
+    return data;
+}
 
 int main(int argc, char ** argv) {
     if (argc != 2) {
         std::cerr << "USAGE: Bench <FILE>" << std::endl;
         return 1;
     }
-    auto dataset = read_glove(argv[1]);
+    auto dataset = read_float_vectors_hdf5(argv[1]);
 
     // bench_api_simhash(dataset);
     // bench_query(dataset);
     // bench_index_build(dataset);
     // bench_hash(dataset);
-    bench_join(dataset);
+    // bench_join(dataset);
+    bench_dist_sketch(dataset);
 }
 
 std::vector<std::vector<float>> read_glove(const std::string& filename) {
