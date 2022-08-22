@@ -273,12 +273,18 @@ def compute_recalls(db):
                 hfp[top_pairs_key] = topk
 
             baseline_pairs = set([(min(pair[0], pair[1]), max(pair[0], pair[1])) for pair in hfp[top_pairs_key][:k, 1:3].astype(np.int32)])
-            baseline_dists = hfp[top_pairs_key][:k, 0]
-
+            top = hfp[top_pairs_key][:]
+            kth_sim = top[k-1, 0]
+            # Select all the pairs with similarity larger then or equal 
+            # to the k-th
+            baseline_pairs = set([
+                (min(pair[0], pair[1]), max(pair[0], pair[1])) 
+                for pair in top[top[:,0] >= kth_sim][:,1:].astype(np.int32)
+            ])
+            
 
         print("Computing recalls for {} {} on {} with k={}".format(algorithm, params, dataset, k))
         print(baseline_pairs)
-        print(baseline_dists)
         output_file = os.path.join(BASE_DIR, output_file)
         with h5py.File(output_file) as hfp:
             actual_pairs = set(map(tuple, hfp[hdf5_group]['global-top-{}'.format(k)]))
@@ -288,7 +294,7 @@ def compute_recalls(db):
         for pair in baseline_pairs:
             if pair in actual_pairs:
                 matched += 1
-        recall = matched / len(baseline_pairs)
+        recall = matched / k
         db.execute(
             """UPDATE main
                  SET recall = :recall
