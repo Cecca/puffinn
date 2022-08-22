@@ -37,6 +37,9 @@ run:
   cmake --build build --config RelWithDebInfo --target XiaoEtAl
   env TOPK_DIR=/mnt/large_storage/topk-join/ python3 join-experiments/run.py
 
+lid dataset:
+  env TOPK_DIR=/mnt/large_storage/topk-join/ python3 join-experiments/lid.py {{dataset}}
+
 plot:
   env TOPK_DIR=/mnt/large_storage/topk-join/ python3 join-experiments/plot.py
 

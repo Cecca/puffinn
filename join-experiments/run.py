@@ -1552,21 +1552,21 @@ if __name__ == "__main__":
 
     threads = 56
 
-    # for dataset in ['glove-200', 'DeepImage', 'DBLP', 'Orkut']:
-    #     # ----------------------------------------------------------------------
-    #     # Xiao et al. global top-k
-    #     if dataset in ['DBLP', "Orkut"]:
-    #         index_params = {
-    #             'dataset': dataset,
-    #             'workload': 'global-top-k',
-    #             'algorithm': 'XiaoEtAl',
-    #             'params': {}
-    #         } 
-    #         query_params = [
-    #             {'k': k}
-    #             for k in [1, 10, 100, 1000]
-    #         ]
-    #         run_multiple(index_params, query_params)
+    for dataset in ['glove-200', 'DeepImage', 'DBLP', 'Orkut', 'movielens-20M']:
+         # ----------------------------------------------------------------------
+        # Xiao et al. global top-k
+        if dataset in ['DBLP', "Orkut", "movielens-20M"]:
+            index_params = {
+                'dataset': dataset,
+                'workload': 'global-top-k',
+                'algorithm': 'XiaoEtAl',
+                'params': {}
+            } 
+            query_params = [
+                {'k': k}
+                for k in [1, 10, 100, 1000]
+            ]
+            run_multiple(index_params, query_params)
 
     #     # ----------------------------------------------------------------------
     #     # PUFFINN global top-k
@@ -1615,34 +1615,34 @@ if __name__ == "__main__":
     #             ]
     #             run_multiple(index_params, join_params)
 
-    for dataset in ['DBLP']:#, 'Orkut', 'DeepImage']:
+    for dataset in ['glove-200', 'DeepImage']:
         pass
         # ----------------------------------------------------------------------
         # pynndescent
-        for n_neighbors in [20, 30, 50, 100]:
-            for diversify_prob in [0.5, 0.75, 1.0]:
-                for pruning_degree_multiplier in [1.0, 1.5]:
-                    for leaf_size in [32]:
-                        index_params = {
-                            'n_neighbors': n_neighbors,
-                            'leaf_size': leaf_size,
-                            'pruning_degree_multiplier': pruning_degree_multiplier,
-                            'diversify_prob': diversify_prob
-                        }
-                        join_params = [
-                            {'k': k}
-                            for k in [1, 10, 100]
-                        ]
-                        run_multiple(
-                            {
-                                'dataset': dataset,
-                                'workload': 'local-top-k',
-                                'algorithm': 'pynndescent',
-                                'threads': threads,
-                                'params': index_params
-                            }, 
-                            join_params
-                        )
+        # for n_neighbors in [20, 30, 50, 100]:
+        #     for diversify_prob in [0.5, 0.75, 1.0]:
+        #         for pruning_degree_multiplier in [1.0, 1.5]:
+        #             for leaf_size in [32]:
+        #                 index_params = {
+        #                     'n_neighbors': n_neighbors,
+        #                     'leaf_size': leaf_size,
+        #                     'pruning_degree_multiplier': pruning_degree_multiplier,
+        #                     'diversify_prob': diversify_prob
+        #                 }
+        #                 join_params = [
+        #                     {'k': k}
+        #                     for k in [1, 10, 100]
+        #                 ]
+        #                 run_multiple(
+        #                     {
+        #                         'dataset': dataset,
+        #                         'workload': 'local-top-k',
+        #                         'algorithm': 'pynndescent',
+        #                         'threads': threads,
+        #                         'params': index_params
+        #                     }, 
+        #                     join_params
+        #                 )
 
         # ----------------------------------------------------------------------
         # Faiss-HNSW
@@ -1655,7 +1655,7 @@ if __name__ == "__main__":
         #                 'efConstruction': efConstruction
         #             }
         #             join_params = [
-        #                 {'efSearch': efSearch, 'k': 10}
+        #                 {'efSearch': efSearch, 'k': 1}
         #                 for efSearch in [80, 120]
         #                 # for efSearch in [10, 40, 80, 120, 800]
         #             ]
