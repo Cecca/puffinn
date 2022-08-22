@@ -232,12 +232,16 @@ def compute_recalls(db):
             """,
             {"rowid": rowid, "recall": avg_recall}
         )
-    return
 
     # Global topk
     missing_recalls = db.execute("SELECT rowid, algorithm, params, dataset, k, output_file, hdf5_group FROM main WHERE recall IS NULL AND WORKLOAD = 'global-top-k';").fetchall()
     print("There are {} missing recalls for global-top-k".format(len(missing_recalls)))
     for rowid, algorithm, params, dataset, k, output_file, hdf5_group in missing_recalls:
+
+        if dataset == 'DeepImage':
+            print("TODO: Fix DeepImage")
+            continue
+
         # Compute the top-1000 distances for the dataset, if they are not already there
         dist_key, nn_key = '/top-1000-dists', '/top-1000-neighbors'
         top_pairs_key = '/top-1000-pairs'
@@ -1553,47 +1557,48 @@ if __name__ == "__main__":
     threads = 56
 
     for dataset in ['glove-200', 'DeepImage', 'DBLP', 'Orkut', 'movielens-20M']:
-         # ----------------------------------------------------------------------
+        # ----------------------------------------------------------------------
         # Xiao et al. global top-k
-        if dataset in ['DBLP', "Orkut", "movielens-20M"]:
-            index_params = {
-                'dataset': dataset,
-                'workload': 'global-top-k',
-                'algorithm': 'XiaoEtAl',
-                'params': {}
-            } 
-            query_params = [
-                {'k': k}
-                for k in [1, 10, 100, 1000]
-            ]
-            run_multiple(index_params, query_params)
+        # if dataset in ['DBLP', "Orkut", "movielens-20M"]:
+        #     index_params = {
+        #         'dataset': dataset,
+        #         'workload': 'global-top-k',
+        #         'algorithm': 'XiaoEtAl',
+        #         'params': {}
+        #     } 
+        #     query_params = [
+        #         {'k': k}
+        #         for k in [1, 10, 100, 1000]
+        #     ]
+        #     run_multiple(index_params, query_params)
 
     #     # ----------------------------------------------------------------------
     #     # PUFFINN global top-k
-    #     for hash_source in ['Independent']:
-    #         space_usage = {
-    #             'DeepImage': [32768, 65536],
-    #             'glove-200': [2048, 4096, 8192, 16384],
-    #             'Orkut': [16384, 32768],
-    #             'DBLP': [2048, 4096, 8192, 16384],
-    #         }
-    #         for space_usage in space_usage[dataset]:
-    #             index_params = {
-    #                 'dataset': dataset,
-    #                 'workload': 'global-top-k',
-    #                 'algorithm': 'PUFFINN',
-    #                 'threads': threads,
-    #                 'params': {
-    #                     'space_usage': space_usage,
-    #                     'hash_source': hash_source
-    #                 }
-    #             }
-    #             query_params = [
-    #                 {'k': k, 'recall': recall, 'method': 'LSHJoinGlobal'}
-    #                 for recall in [0.8, 0.9]
-    #                 for k in [1, 10, 100, 1000]
-    #             ]
-    #             run_multiple(index_params, query_params)
+        for hash_source in ['Independent']:
+            space_usage = {
+                'DeepImage': [32768, 65536],
+                'glove-200': [2048, 4096, 8192, 16384],
+                'Orkut': [16384, 32768],
+                'DBLP': [2048, 4096, 8192, 16384],
+                'movielens-20M': [1024, 2048, 4096, 8192, 16384],
+            }
+            for space_usage in space_usage[dataset]:
+                index_params = {
+                    'dataset': dataset,
+                    'workload': 'global-top-k',
+                    'algorithm': 'PUFFINN',
+                    'threads': threads,
+                    'params': {
+                        'space_usage': space_usage,
+                        'hash_source': hash_source
+                    }
+                }
+                query_params = [
+                    {'k': k, 'recall': recall, 'method': 'LSHJoinGlobal'}
+                    for recall in [0.8, 0.9]
+                    for k in [1, 10, 100, 1000]
+                ]
+                run_multiple(index_params, query_params)
 
     # ----------------------------------------------------------------------
     # LSB-Tree global top-k
