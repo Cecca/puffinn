@@ -10,6 +10,7 @@
 #include "puffinn/maxpairbuffer.hpp"
 #include "puffinn/prefixmap.hpp"
 #include "puffinn/typedefs.hpp"
+#include "puffinn/deduplicator.hpp"
 
 #include "omp.h"
 #include <cassert>
@@ -110,6 +111,7 @@ namespace puffinn {
         std::unique_ptr<HashSource<THash>> hash_source;
         // Container of sketches. Also needs to be reset.
         Filterer<TSketch> filterer;
+        Deduplicator deduplicator;
 
         // Number of bytes allowed to be used.
         uint64_t memory_limit;
@@ -251,7 +253,7 @@ namespace puffinn {
         /// This is done in parallel by default.
         /// The number of threads used can be specified using the
         /// OMP_NUM_THREADS environment variable.
-        void rebuild(bool with_sketches = true) {
+        void rebuild(bool with_sketches = true, bool deduplicate = false) {
             TIMER_START(index_build);
             g_performance_metrics.start_timer(Computation::Indexing);
             if (with_sketches) {
@@ -264,6 +266,7 @@ namespace puffinn {
 
             auto desc = dataset.get_description();
             auto table_bytes = PrefixMap<THash>::memory_usage(dataset.get_size(), hash_args->function_memory_usage(desc, MAX_HASHBITS));
+            auto dedup_bytes = (deduplicate)? Deduplicator::repetition_memory_usage(dataset.get_size()) : 0;
             auto filterer_bytes = filterer.memory_usage(desc);
 
             uint64_t required_mem = dataset.memory_usage()+filterer_bytes; 
@@ -272,7 +275,8 @@ namespace puffinn {
             while (required_mem + table_mem < memory_limit) {
                 num_tables++;
                 table_mem = hash_args->memory_usage(desc, num_tables, MAX_HASHBITS)
-                    + num_tables * table_bytes;
+                    + num_tables * table_bytes
+                    + num_tables * dedup_bytes;
             }
             if (num_tables != 0) {
                 num_tables--;
@@ -292,6 +296,7 @@ namespace puffinn {
                     // Discard the last tables. Since values are never deleted,
                     // the number of tables is not going to increase again.
                     lsh_maps.pop_back();
+                    // FIXME: support removing repetitions from the deduplicator
                 }
             } else {
                 hash_source = hash_args->build(
@@ -303,10 +308,16 @@ namespace puffinn {
                 for (unsigned int repetition=0; repetition < num_tables; repetition++) {
                     lsh_maps.emplace_back(MAX_HASHBITS);
                 }
+                if (deduplicate) {
+                    deduplicator = Deduplicator(num_tables);
+                }
             }
 
             for (auto& map : lsh_maps) {
                 map.reserve(dataset.get_size());
+            }
+            if (deduplicate) {
+                deduplicator.resize(dataset.get_size());
             }
 
             g_performance_metrics.start_timer(Computation::IndexHashing);
@@ -326,6 +337,9 @@ namespace puffinn {
                 // Copy the hash values in the appropriate prefix maps
                 for (size_t map_idx = 0; map_idx < lsh_maps.size(); map_idx++) {
                     lsh_maps[map_idx].insert(tid, idx, hash_values[map_idx]);
+                    if (deduplicate) {
+                        deduplicator.insert(idx, map_idx, hash_values[map_idx]);
+                    }
                 }
             }
             g_performance_metrics.store_time(Computation::IndexHashing);
@@ -649,6 +663,7 @@ namespace puffinn {
             std::vector<std::vector<uint32_t>> res;
 
             bool has_sketches = filterer.size() > 0;
+            bool deduplicate = !deduplicator.is_empty();
 
             g_performance_metrics.new_query();
             g_performance_metrics.start_timer(Computation::Total);
@@ -718,6 +733,10 @@ namespace puffinn {
                         for (auto s = r+1; s < range.second; s++) {
                             auto R = *r;
                             auto S = *s;
+                            if (deduplicate && deduplicator.first_collision_at(R, S, MAX_HASHBITS) != i) {
+                                // skip comparison if the first collision was in another repetition
+                                continue;
+                            }
                             auto dist = TSim::compute_similarity(
                                 dataset[R], 
                                 dataset[S], 
@@ -804,6 +823,10 @@ namespace puffinn {
                                             continue;
                                         }
                                         if (!active[R] && !active[S]) {
+                                            continue;
+                                        }
+                                        if (deduplicate && deduplicator.first_collision_at(R, S, depth) != i) {
+                                            // skip comparison if the first collision was in another repetition
                                             continue;
                                         }
 
