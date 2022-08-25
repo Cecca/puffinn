@@ -715,7 +715,7 @@ namespace puffinn {
             TIMER_START(initial_scan);
             std::cerr << "Initial scan start" << std::endl;
             // Set up data structures. Create segments for initial hash codes.
-            #pragma omp parallel for
+            #pragma omp parallel for schedule(dynamic)
             for (size_t i = 0; i < lsh_maps.size(); i++) {
                 int tid = omp_get_thread_num();
                 segments[i].push_back(0);
@@ -733,8 +733,8 @@ namespace puffinn {
                         for (auto s = r+1; s < range.second; s++) {
                             auto R = *r;
                             auto S = *s;
-                            if (deduplicate && deduplicator.first_collision_at(R, S, MAX_HASHBITS) != i) {
-                                // skip comparison if the first collision was in another repetition
+                            if (deduplicate && deduplicator.compute_at(R, S, MAX_HASHBITS) != i) {
+                                // skip comparison if this pair should be computed in another repetition
                                 continue;
                             }
                             auto dist = TSim::compute_similarity(
@@ -779,7 +779,7 @@ namespace puffinn {
 
 
                 TIMER_START(join_segments);
-                #pragma omp parallel for
+                #pragma omp parallel for schedule(dynamic)
                 for (size_t i = 0; i < lsh_maps.size(); i++) {
                     size_t tl_sketch_discarded_cnt = 0;
                     size_t tl_collision_cnt = 0;
@@ -825,8 +825,8 @@ namespace puffinn {
                                         if (!active[R] && !active[S]) {
                                             continue;
                                         }
-                                        if (deduplicate && deduplicator.first_collision_at(R, S, depth) != i) {
-                                            // skip comparison if the first collision was in another repetition
+                                        if (deduplicate && deduplicator.compute_at(R, S, depth) != i) {
+                                            // skip comparison if we should compute this in another repetition
                                             continue;
                                         }
 

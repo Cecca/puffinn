@@ -34,7 +34,6 @@ class Deduplicator {
         while (stride < num_repetitions) {
             stride += WORDS_PER_VEC;
         }
-        printf("repetitions %d stride %d\n", num_repetitions, stride);
     }
 
     bool is_empty() const {
@@ -50,7 +49,75 @@ class Deduplicator {
         hashes[offset + repetition] = h;
     }
 
-private:
+    int32_t first_collision_from_scalar(size_t R, size_t S, size_t prefix, size_t from) const {
+        uint32_t prefix_mask = 0xffffffff << (MAX_HASHBITS - prefix);
+        auto offset_i = stride * R;
+        auto offset_j = stride * S;
+        for (size_t rep=0; rep<num_repetitions; rep++) {
+            size_t r = (from + rep) % num_repetitions;
+            if ((hashes[offset_i + r] & prefix_mask) == (hashes[offset_j + r] & prefix_mask)) {
+                return r;
+            }
+        }
+        return -1;
+    }
+
+    #ifdef __AVX2__
+    int32_t first_collision_from_avx(size_t R, size_t S, size_t prefix, size_t from) const {
+        size_t from_aligned = (from / WORDS_PER_VEC) * WORDS_PER_VEC;
+        uint32_t prefix_mask = 0xffffffff << (MAX_HASHBITS - prefix);
+
+        __m256i mask = _mm256_set_epi32(
+            prefix_mask,
+            prefix_mask,
+            prefix_mask,
+            prefix_mask,
+            prefix_mask,
+            prefix_mask,
+            prefix_mask,
+            prefix_mask
+        );
+
+        size_t offset_i = stride * R;
+        size_t offset_j = stride * S;
+
+        for (
+            size_t r=0;
+            r < stride;
+            r += WORDS_PER_VEC
+        ) {
+            size_t rep = (from_aligned + r) % stride;
+            __m256i tmpR = _mm256_and_si256(
+                // FIXME: the standard vector does not allocate aligned memory
+                _mm256_loadu_si256((__m256i*)&hashes[offset_i + rep]),
+                mask
+            );
+            __m256i tmpS = _mm256_and_si256(
+                _mm256_loadu_si256((__m256i*)&hashes[offset_j + rep]),
+                mask
+            );
+            __m256i cmpres = _mm256_cmpeq_epi32(tmpR, tmpS);
+
+            if (!_mm256_testz_si256(cmpres, cmpres)) {
+                // At least one word has a bit set, therefore extract them and
+                // look for the first non zero one
+                alignas(32) LshDatatype stored[WORDS_PER_VEC];
+                _mm256_store_si256((__m256i*)stored, cmpres);
+                for (size_t w=0; w<WORDS_PER_VEC; w++) {
+                    if (stored[w] != 0 && rep + w < num_repetitions) {
+                        int32_t out_rep = rep + w;
+                        return out_rep;
+                    }
+                }
+            }
+        }
+
+        return -1;
+    }
+    #endif
+
+
+
     int32_t first_collision_at_scalar(size_t R, size_t S, size_t prefix) const {
         uint32_t prefix_mask = 0xffffffff << (MAX_HASHBITS - prefix);
         auto ptr_i = hashes.cbegin() + stride * R;
@@ -127,9 +194,35 @@ public:
     //! compute the similarity of points only in the first repetition.
     int32_t first_collision_at(size_t R, size_t S, size_t prefix) const {
         #ifdef __AVX2__
-        first_collision_at_avx(R, S, prefix);
+        return first_collision_at_avx(R, S, prefix);
         #else
-        first_collision_at_scalar(R, S, prefix);
+        return first_collision_at_scalar(R, S, prefix);
+        #endif
+    }
+
+private:
+    size_t all_collisions_at_scalar(size_t R, size_t S, size_t prefix, std::vector<size_t> & out) const {
+        assert(out.size() == num_repetitions);
+        size_t oidx = 0;
+        uint32_t prefix_mask = 0xffffffff << (MAX_HASHBITS - prefix);
+        auto ptr_i = hashes.cbegin() + stride * R;
+        auto ptr_j = hashes.cbegin() + stride * S;
+        for (size_t rep=0; rep<num_repetitions; rep++) {
+            if ((*ptr_i & prefix_mask) == (*ptr_j & prefix_mask)) {
+                out[oidx++] = rep;
+            }
+            ptr_i++;
+            ptr_j++;
+        }
+        return oidx;
+    }
+
+public:
+    int32_t compute_at(size_t R, size_t S, size_t prefix) const {
+        #ifdef __AVX2__
+        return first_collision_from_avx(R, S, prefix, (R + S) % num_repetitions);
+        #else
+        return first_collision_from_scalar(R, S, prefix, (R + S) % num_repetitions);
         #endif
     }
 

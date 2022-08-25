@@ -6,7 +6,7 @@ build:
 check:
   #!/bin/bash
   cmake --build build --config RelWithDebInfo --target PuffinnJoin
-  time build/PuffinnJoin < instructions2.txt > result.dsv
+  env OMP_NUM_THREADS=56 time build/PuffinnJoin < instructions.txt > result.dsv
 
 cache-misses exe:
   perf record --call-graph dwarf -e cache-misses -p $(pgrep {{exe}})
@@ -22,7 +22,7 @@ install-flamegraph:
   flamegraph --version || cargo install flamegraph
 
 test_lsh_join:
-  cmake --build build --config RelWithDebInfo --target Test
+  cmake --build build --config Debug --target Test
   env OMP_NUM_THREADS=1 build/Test Index::lsh_join
 
 bench:

@@ -406,10 +406,19 @@ void bench_deduplicate(const std::vector<std::vector<float>> & dataset) {
         .batch(n * num_reps)
         .timeUnit(std::chrono::nanoseconds(1), "ns");
 
-    bencher.run("Deduplicate (per item per rep)", [&] {
+    bencher.run("First collision from (avx) (per item per rep)", [&] {
         for (size_t S=0; S<n; S++) {
             ankerl::nanobench::doNotOptimizeAway(
-                dedup.first_collision_at(R, S, prefix)
+                dedup.first_collision_from_avx(R, S, prefix, (R + S) % num_reps)
+            );
+        }
+    });
+
+    std::vector<size_t> out(num_reps);
+    bencher.run("First collision from (scalar) (per item per rep)", [&] {
+        for (size_t S=0; S<n; S++) {
+            ankerl::nanobench::doNotOptimizeAway(
+                dedup.first_collision_from_scalar(R, S, prefix, (R + S) % num_reps)
             );
         }
     });
