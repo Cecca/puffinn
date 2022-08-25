@@ -1,6 +1,7 @@
 #include <nanobench.h>
 
 #include "puffinn/collection.hpp"
+#include "puffinn/deduplicator.hpp"
 #include "puffinn/hash/simhash.hpp"
 #include "puffinn/hash/crosspolytope.hpp"
 #include "puffinn/hash_source/pool.hpp"
@@ -331,6 +332,18 @@ std::vector<std::vector<uint32_t>> read_int_vectors_hdf5(std::string path) {
     return res;
 }
 
+uint32_t universe_size(const std::vector<std::vector<uint32_t>> & dataset) {
+    uint32_t s = 0;
+    for (auto & x : dataset) {
+        for (auto e : x) {
+            if (e > s) {
+                s = e;
+            }
+        }
+    }
+    return s + 1;
+}
+
 
 float norm(std::vector<float> & v) {
     float n = 0.0;
@@ -355,22 +368,53 @@ std::vector<std::vector<float>> read_float_vectors_hdf5(std::string path, bool n
     return data;
 }
 
+void bench_deduplicate(const std::vector<std::vector<uint32_t>> & dataset) {
+    puffinn::Dataset<puffinn::SetFormat> dat(universe_size(dataset));
+    for (auto x : dataset) {
+        dat.insert(x);
+    }
+    size_t n = dat.get_size();
+    size_t num_reps = 1000;
+    auto source = puffinn::IndependentHashArgs<puffinn::MinHash1Bit>().build(
+        dat.get_description(), num_reps, 24
+    );
+
+    std::vector<puffinn::LshDatatype> hash_values;
+
+    puffinn::Deduplicator dedup(num_reps);
+    dedup.resize(dat.get_size());
+    for (size_t i=0; i<dat.get_size(); i++) {
+        source->hash_repetitions(dat[i], hash_values);
+        for (size_t rep=0; rep<num_reps; rep++) {
+            dedup.insert(i, rep, hash_values[rep]);
+        }
+    }
+
+    size_t R = dat.get_size() / 2;
+    size_t prefix = 20;
+
+    for (size_t S=0; S<n; S++) {
+        dedup.first_collision_at(R, S, prefix);
+    }
+
+}
 
 int main(int argc, char ** argv) {
     if (argc != 2) {
         std::cerr << "USAGE: Bench <FILE>" << std::endl;
         return 1;
     }
-    // auto dataset = read_int_vectors_hdf5(argv[1]);
-    auto dataset = read_float_vectors_hdf5(argv[1], true);
+    auto jaccard_dataset = read_int_vectors_hdf5(argv[1]);
+    auto cosine_dataset = read_float_vectors_hdf5(argv[1], true);
 
     // bench_api_simhash(dataset);
     // bench_query(dataset);
     // bench_index_build(dataset);
     // bench_hash(dataset);
     // bench_join(dataset);
-    // bench_jaccard(dataset);
-    bench_cosine(dataset);
+    // bench_jaccard(jaccard_dataset);
+    // bench_cosine(cosine_dataset);
+    bench_deduplicate(jaccard_dataset);
 }
 
 std::vector<std::vector<float>> read_glove(const std::string& filename) {
