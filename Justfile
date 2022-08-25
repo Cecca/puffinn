@@ -1,5 +1,8 @@
 set dotenv-load
 
+build:
+  cmake --build build --config Debug --target PuffinnJoin
+
 check:
   #!/bin/bash
   cmake --build build --config RelWithDebInfo --target PuffinnJoin
@@ -18,9 +21,9 @@ install-flamegraph:
   # Check and install flamegraph
   flamegraph --version || cargo install flamegraph
 
-test:
+test_lsh_join:
   cmake --build build --config RelWithDebInfo --target Test
-  env OMP_NUM_THREADS=56 build/Test
+  env OMP_NUM_THREADS=1 build/Test Index::lsh_join
 
 bench:
   cmake --build build --config RelWithDebInfo --target Bench
