@@ -190,7 +190,7 @@ namespace collection {
         for (auto &vec : inserted) {
             table.insert(vec);
         }
-        table.rebuild(false);
+        table.rebuild(false, true);
 
         for (auto k : ks) {            
             auto exact = table.bf_join(k);

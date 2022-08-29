@@ -1,6 +1,7 @@
 #include <nanobench.h>
 
 #include "puffinn/collection.hpp"
+#include "puffinn/deduplicator.hpp"
 #include "puffinn/hash/simhash.hpp"
 #include "puffinn/hash/crosspolytope.hpp"
 #include "puffinn/hash_source/pool.hpp"
@@ -331,6 +332,18 @@ std::vector<std::vector<uint32_t>> read_int_vectors_hdf5(std::string path) {
     return res;
 }
 
+uint32_t universe_size(const std::vector<std::vector<uint32_t>> & dataset) {
+    uint32_t s = 0;
+    for (auto & x : dataset) {
+        for (auto e : x) {
+            if (e > s) {
+                s = e;
+            }
+        }
+    }
+    return s + 1;
+}
+
 
 float norm(std::vector<float> & v) {
     float n = 0.0;
@@ -355,22 +368,79 @@ std::vector<std::vector<float>> read_float_vectors_hdf5(std::string path, bool n
     return data;
 }
 
+void bench_deduplicate(const std::vector<std::vector<float>> & dataset) {
+    puffinn::Dataset<puffinn::UnitVectorFormat> dat(dataset[0].size());
+    // Insert the last 10% of the input
+    for (size_t i = dataset.size() - dataset.size() / 10; i<dataset.size(); i++) {
+        dat.insert(dataset[i]);
+    }
+    printf("Instantiated dataset\n");
+    size_t n = dat.get_size();
+    size_t num_reps = 1000;
+    auto source = puffinn::IndependentHashArgs<puffinn::SimHash>().build(
+        dat.get_description(), num_reps, 24
+    );
+    printf("Hash source set up\n");
+
+    auto n_threads = omp_get_max_threads();
+    std::vector<std::vector<puffinn::LshDatatype>> hash_values(n_threads);
+
+    puffinn::Deduplicator dedup(num_reps);
+    dedup.resize(dat.get_size());
+    #pragma omp parallel for
+    for (size_t i=0; i<dat.get_size(); i++) {
+        auto tid = omp_get_thread_num();
+        source->hash_repetitions(dat[i], hash_values[tid]);
+        for (size_t rep=0; rep<num_reps; rep++) {
+            dedup.insert(i, rep, hash_values[tid][rep]);
+        }
+    }
+    printf("Populated deduplicator\n");
+
+    size_t R = 0;
+    size_t prefix = 20;
+
+    auto bencher = ankerl::nanobench::Bench()
+        .title("Deduplicate computations")
+        .minEpochIterations(10)
+        .batch(n * num_reps)
+        .timeUnit(std::chrono::nanoseconds(1), "ns");
+
+    bencher.run("First collision from (avx) (per item per rep)", [&] {
+        for (size_t S=0; S<n; S++) {
+            ankerl::nanobench::doNotOptimizeAway(
+                dedup.first_collision_from_avx(R, S, prefix, (R + S) % num_reps)
+            );
+        }
+    });
+
+    std::vector<size_t> out(num_reps);
+    bencher.run("First collision from (scalar) (per item per rep)", [&] {
+        for (size_t S=0; S<n; S++) {
+            ankerl::nanobench::doNotOptimizeAway(
+                dedup.first_collision_from_scalar(R, S, prefix, (R + S) % num_reps)
+            );
+        }
+    });
+
+}
 
 int main(int argc, char ** argv) {
     if (argc != 2) {
         std::cerr << "USAGE: Bench <FILE>" << std::endl;
         return 1;
     }
-    // auto dataset = read_int_vectors_hdf5(argv[1]);
-    auto dataset = read_float_vectors_hdf5(argv[1], true);
+    // auto jaccard_dataset = read_int_vectors_hdf5(argv[1]);
+    auto cosine_dataset = read_float_vectors_hdf5(argv[1], true);
 
     // bench_api_simhash(dataset);
     // bench_query(dataset);
     // bench_index_build(dataset);
     // bench_hash(dataset);
     // bench_join(dataset);
-    // bench_jaccard(dataset);
-    bench_cosine(dataset);
+    // bench_jaccard(jaccard_dataset);
+    // bench_cosine(cosine_dataset);
+    bench_deduplicate(cosine_dataset);
 }
 
 std::vector<std::vector<float>> read_glove(const std::string& filename) {
