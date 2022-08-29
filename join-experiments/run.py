@@ -97,6 +97,12 @@ MIGRATIONS = [
     SELECT *
     FROM main
     NATURAL JOIN recent_versions;
+    """,
+    """
+    CREATE TABLE dataset_size (
+        dataset TEXT,
+        size    INT
+    )
     """
 ]
 
@@ -1515,6 +1521,28 @@ def run_multiple(index_configuration, join_configurations, debug=False):
     algo.done()
 
 
+def dataset_size(dataset_name):
+    f = h5py.File(DATASETS[dataset_name]())
+    distance = f.attrs['distance']
+    if distance == 'jaccard':
+        return f['size_train'].shape[0]
+    else:
+        return f['train'].shape[0]
+
+
+def insert_sizes():
+    with get_db() as db:
+        for dataset in DATASETS.keys():
+            size = dataset_size(dataset)
+            print(dataset, size)
+            db.execute("""
+            INSERT INTO dataset_size (dataset, size) VALUES (:dataset, :size)
+            ON CONFLICT DO NOTHING;
+            """, {
+               'dataset': dataset,
+               'size': size
+            })
+
 
 if __name__ == "__main__":
     if not os.path.isdir(BASE_DIR):
@@ -1626,7 +1654,7 @@ if __name__ == "__main__":
     #             ]
     #             run_multiple(index_params, join_params)
 
-    for dataset in ['glove-200', 'DeepImage']:
+    for dataset in ['Orkut']: #['glove-200', 'DeepImage']:
         pass
         # ----------------------------------------------------------------------
         # pynndescent
@@ -1722,32 +1750,33 @@ if __name__ == "__main__":
 
         # ----------------------------------------------------------------------
         # PUFFINN local top-k
-        # for hash_source in ['Independent']:
-        #     space_usage = {
-        #         'DeepImage': [32768, 65536],
-        #         'glove-200': [2048, 4096, 8192, 16384],
-        #         'Orkut': [16384, 32768],
-        #         'DBLP': [2048, 4096, 8192, 16384],
-        #     }
-        #     for space_usage in space_usage[dataset]:
-        #         for sketches in ['1', '0']:
-        #             index_params = {
-        #                 'dataset': dataset,
-        #                 'workload': 'local-top-k',
-        #                 'algorithm': 'PUFFINN',
-        #                 'threads': threads,
-        #                 'params': {
-        #                     'space_usage': space_usage,
-        #                     'hash_source': hash_source,
-        #                     'with_sketches': sketches
-        #                 }
-        #             }
-        #             query_params = [
-        #                 {'k': k, 'recall': recall, 'method': 'LSHJoin'}
-        #                 for recall in [0.8, 0.9]
-        #                 for k in [1, 10]
-        #             ]
-        #             run_multiple(index_params, query_params)
+        for hash_source in ['Independent']:
+            space_usage = {
+                'DeepImage': [32768, 65536],
+                'glove-200': [2048, 4096, 8192, 16384],
+                'Orkut': [16384, 32768],
+                'DBLP': [2048, 4096, 8192, 16384],
+            }
+            for space_usage in space_usage[dataset]:
+                for sketches in ['0']: # TODO: reintroduce sketches
+                    index_params = {
+                        'dataset': dataset,
+                        'workload': 'local-top-k',
+                        'algorithm': 'PUFFINN',
+                        'threads': threads,
+                        'params': {
+                            'space_usage': space_usage,
+                            'hash_source': hash_source,
+                            'with_sketches': sketches,
+                            'deduplicate': '1'
+                        }
+                    }
+                    query_params = [
+                        {'k': k, 'recall': recall, 'method': 'LSHJoin'}
+                        for recall in [0.8, 0.9]
+                        for k in [1]
+                    ]
+                    run_multiple(index_params, query_params)
 
 
 
