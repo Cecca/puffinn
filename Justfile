@@ -52,6 +52,9 @@ distr data:
 console:
   cd join-experiments && env TOPK_DIR=/mnt/large_storage/topk-join/ python3
 
+aol:
+  cd join-experiments && env TOPK_DIR=/mnt/large_storage/topk-join/ python3 -c 'import run; run.DATASETS["AOL"]()'
+
 bash:
   cd /mnt/large_storage/topk-join/ && bash
 

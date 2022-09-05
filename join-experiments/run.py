@@ -1104,9 +1104,59 @@ def movielens20m(out_fn):
     return movielens('ml-20m.zip', 'ml-20m/ratings.csv', out_fn, ',', True)
 
 
-CREATE_RAW = os.path.abspath("join-experiments/scripts/createraw.py")
-ORKUT_PY = os.path.abspath("join-experiments/scripts/orkut.py")
+AOL_DATA = os.path.abspath("scripts/aol-data.sh")
+CREATE_RAW = os.path.abspath("scripts/createraw.py")
+SHUF_LENGTH = os.path.abspath("scripts/shuflength.py")
+ORKUT_PY = os.path.abspath("scripts/orkut.py")
 
+
+# Adapted from https://github.com/Cecca/danny/blob/master/datasets/prepare.py
+def aol(out_fn):
+    if os.path.isfile(out_fn):
+        return out_fn
+    local_fn = os.path.join(DATASET_DIR, "aol-data.tar.gz")
+    directory = DATASET_DIR
+    download("http://www.cim.mcgill.ca/~dudek/206/Logs/AOL-user-ct-collection/aol-data.tar.gz", local_fn)
+    print("Unpacking")
+    subprocess.run(["tar", "xzvf", local_fn], cwd=directory, check=True)
+    print("Extracting raw data")
+    subprocess.run(
+        "{} {}/AOL-user-ct-collection/user-ct-test-collection-*.txt.gz > aol-data.txt".format(
+            AOL_DATA, directory
+        ),
+        shell=True,
+        check=True,
+        cwd=directory,
+    )
+    print("Creating data")
+    subprocess.run(
+        "{} --bywhitespace --dedup aol-data.txt aol-data-white-dedup-raw.txt ".format(
+            CREATE_RAW
+        ),
+        shell=True,
+        check=True,
+        cwd=directory,
+    )
+    print("Shuffling")
+    subprocess.run(
+        "{} aol-data-white-dedup-raw.txt > tmp.txt".format(SHUF_LENGTH),
+        shell=True,
+        check=True,
+        cwd=directory,
+    )
+    tmp = os.path.join(DATASET_DIR, "tmp.txt")
+
+    print("Loading sets")
+    sets = []
+    with open(tmp) as fp:
+        for line in fp.readlines():
+            tokens = line.split()
+            items = [int(t) for t in tokens[2:]]
+            sets.append(items)
+    print("Writing sparse vectors")
+    write_sparse(out_fn, sets)
+
+    return out_fn
 
 # Adapted from https://github.com/Cecca/danny/blob/master/datasets/prepare.py
 def orkut(out_fn):
@@ -1291,6 +1341,7 @@ DATASETS = {
     'glove-200': lambda: glove(os.path.join(DATASET_DIR, 'glove-200.hdf5'), 200),
     'random-jaccard-10k': lambda: random_jaccard(os.path.join(DATASET_DIR, 'random-jaccard-10k.hdf5'), n=10000),
     'DBLP': lambda : dblp(os.path.join(DATASET_DIR, 'dblp.hdf5')),
+    'AOL': lambda : aol(os.path.join(DATASET_DIR, 'aol.hdf5')),
     'Kosarak': lambda: kosarak(os.path.join(DATASET_DIR, 'kosarak.hdf5')),
     'DeepImage': lambda: deep_image(os.path.join(DATASET_DIR, 'deep_image.hdf5')),
     'NYTimes': lambda: nytimes(os.path.join(DATASET_DIR, 'nytimes.hdf5'), 256),
