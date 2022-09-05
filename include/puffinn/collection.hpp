@@ -718,13 +718,26 @@ namespace puffinn {
             #pragma omp parallel for schedule(dynamic)
             for (size_t i = 0; i < lsh_maps.size(); i++) {
                 int tid = omp_get_thread_num();
+                segments[i].reserve(dataset.get_size() / 5); // Preallocate for efficiency
                 segments[i].push_back(0);
+                size_t largest_bucket = 0;
                 for (size_t j = 1; j < lsh_maps[i].hashes.size(); j++) {
                     if (lsh_maps[i].hashes[j] != lsh_maps[i].hashes[j-1]) {
+                        size_t size = j - segments[i][segments[i].size() - 1];
                         segments[i].push_back(j);
+                        if (size > largest_bucket) {
+                            largest_bucket = size ;
+                        }
                     }
-                }    
+                }
 
+                size_t dcnt = 0;
+
+                std::cerr << "Start self join of "
+                        << segments[i].size() 
+                        <<  " segments with largest of size "
+                        << largest_bucket
+                        << std::endl;
                 // Carry out initial all-to-all comparisons within a segment.
                 // We leave out the first and last segment since it's filled up with filler elements.
                 for (size_t j = 2; j < segments[i].size() - 1; j++) { 
@@ -737,6 +750,7 @@ namespace puffinn {
                                 // skip comparison if this pair should be computed in another repetition
                                 continue;
                             }
+                            dcnt++;
                             auto dist = TSim::compute_similarity(
                                 dataset[R], 
                                 dataset[S], 
@@ -751,6 +765,7 @@ namespace puffinn {
                         }
                     }
                 }
+                std::cerr << "Computed " << dcnt << " sims" << std::endl;
             }
             g_performance_metrics.store_time(Computation::SearchInit);
             std::cerr << "Initial scan done (" << g_performance_metrics.get_total_time(Computation::SearchInit) << ")" << std::endl;

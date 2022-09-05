@@ -97,6 +97,24 @@ MIGRATIONS = [
     SELECT *
     FROM main
     NATURAL JOIN recent_versions;
+    """,
+    """
+    CREATE TABLE dataset_size (
+        dataset TEXT,
+        size    INT
+    )
+    """,
+    """
+    CREATE TABLE dimensionality (
+        dataset TEXT,
+        k       INT, 
+        lid_mean REAL, 
+        lid_median REAL, 
+        lid_min    REAL, 
+        lid_max    REAL, 
+        lid_25     REAL, 
+        lid_75     REAL
+    );
     """
 ]
 
@@ -1086,9 +1104,59 @@ def movielens20m(out_fn):
     return movielens('ml-20m.zip', 'ml-20m/ratings.csv', out_fn, ',', True)
 
 
-CREATE_RAW = os.path.abspath("join-experiments/scripts/createraw.py")
-ORKUT_PY = os.path.abspath("join-experiments/scripts/orkut.py")
+AOL_DATA = os.path.abspath("scripts/aol-data.sh")
+CREATE_RAW = os.path.abspath("scripts/createraw.py")
+SHUF_LENGTH = os.path.abspath("scripts/shuflength.py")
+ORKUT_PY = os.path.abspath("scripts/orkut.py")
 
+
+# Adapted from https://github.com/Cecca/danny/blob/master/datasets/prepare.py
+def aol(out_fn):
+    if os.path.isfile(out_fn):
+        return out_fn
+    local_fn = os.path.join(DATASET_DIR, "aol-data.tar.gz")
+    directory = DATASET_DIR
+    download("http://www.cim.mcgill.ca/~dudek/206/Logs/AOL-user-ct-collection/aol-data.tar.gz", local_fn)
+    print("Unpacking")
+    subprocess.run(["tar", "xzvf", local_fn], cwd=directory, check=True)
+    print("Extracting raw data")
+    subprocess.run(
+        "{} {}/AOL-user-ct-collection/user-ct-test-collection-*.txt.gz > aol-data.txt".format(
+            AOL_DATA, directory
+        ),
+        shell=True,
+        check=True,
+        cwd=directory,
+    )
+    print("Creating data")
+    subprocess.run(
+        "{} --bywhitespace --dedup aol-data.txt aol-data-white-dedup-raw.txt ".format(
+            CREATE_RAW
+        ),
+        shell=True,
+        check=True,
+        cwd=directory,
+    )
+    print("Shuffling")
+    subprocess.run(
+        "{} aol-data-white-dedup-raw.txt > tmp.txt".format(SHUF_LENGTH),
+        shell=True,
+        check=True,
+        cwd=directory,
+    )
+    tmp = os.path.join(DATASET_DIR, "tmp.txt")
+
+    print("Loading sets")
+    sets = []
+    with open(tmp) as fp:
+        for line in fp.readlines():
+            tokens = line.split()
+            items = [int(t) for t in tokens[2:]]
+            sets.append(items)
+    print("Writing sparse vectors")
+    write_sparse(out_fn, sets)
+
+    return out_fn
 
 # Adapted from https://github.com/Cecca/danny/blob/master/datasets/prepare.py
 def orkut(out_fn):
@@ -1273,6 +1341,7 @@ DATASETS = {
     'glove-200': lambda: glove(os.path.join(DATASET_DIR, 'glove-200.hdf5'), 200),
     'random-jaccard-10k': lambda: random_jaccard(os.path.join(DATASET_DIR, 'random-jaccard-10k.hdf5'), n=10000),
     'DBLP': lambda : dblp(os.path.join(DATASET_DIR, 'dblp.hdf5')),
+    'AOL': lambda : aol(os.path.join(DATASET_DIR, 'aol.hdf5')),
     'Kosarak': lambda: kosarak(os.path.join(DATASET_DIR, 'kosarak.hdf5')),
     'DeepImage': lambda: deep_image(os.path.join(DATASET_DIR, 'deep_image.hdf5')),
     'NYTimes': lambda: nytimes(os.path.join(DATASET_DIR, 'nytimes.hdf5'), 256),
@@ -1515,6 +1584,28 @@ def run_multiple(index_configuration, join_configurations, debug=False):
     algo.done()
 
 
+def dataset_size(dataset_name):
+    f = h5py.File(DATASETS[dataset_name]())
+    distance = f.attrs['distance']
+    if distance == 'jaccard':
+        return f['size_train'].shape[0]
+    else:
+        return f['train'].shape[0]
+
+
+def insert_sizes():
+    with get_db() as db:
+        for dataset in DATASETS.keys():
+            size = dataset_size(dataset)
+            print(dataset, size)
+            db.execute("""
+            INSERT INTO dataset_size (dataset, size) VALUES (:dataset, :size)
+            ON CONFLICT DO NOTHING;
+            """, {
+               'dataset': dataset,
+               'size': size
+            })
+
 
 if __name__ == "__main__":
     if not os.path.isdir(BASE_DIR):
@@ -1626,7 +1717,7 @@ if __name__ == "__main__":
     #             ]
     #             run_multiple(index_params, join_params)
 
-    for dataset in ['glove-200', 'DeepImage']:
+    for dataset in ['Orkut']: #['glove-200', 'DeepImage']:
         pass
         # ----------------------------------------------------------------------
         # pynndescent
@@ -1722,32 +1813,33 @@ if __name__ == "__main__":
 
         # ----------------------------------------------------------------------
         # PUFFINN local top-k
-        # for hash_source in ['Independent']:
-        #     space_usage = {
-        #         'DeepImage': [32768, 65536],
-        #         'glove-200': [2048, 4096, 8192, 16384],
-        #         'Orkut': [16384, 32768],
-        #         'DBLP': [2048, 4096, 8192, 16384],
-        #     }
-        #     for space_usage in space_usage[dataset]:
-        #         for sketches in ['1', '0']:
-        #             index_params = {
-        #                 'dataset': dataset,
-        #                 'workload': 'local-top-k',
-        #                 'algorithm': 'PUFFINN',
-        #                 'threads': threads,
-        #                 'params': {
-        #                     'space_usage': space_usage,
-        #                     'hash_source': hash_source,
-        #                     'with_sketches': sketches
-        #                 }
-        #             }
-        #             query_params = [
-        #                 {'k': k, 'recall': recall, 'method': 'LSHJoin'}
-        #                 for recall in [0.8, 0.9]
-        #                 for k in [1, 10]
-        #             ]
-        #             run_multiple(index_params, query_params)
+        for hash_source in ['Independent']:
+            space_usage = {
+                'DeepImage': [32768, 65536],
+                'glove-200': [2048, 4096, 8192, 16384],
+                'Orkut': [2048, 4906, 8192], #, 16384, 32768],
+                'DBLP': [2048, 4096, 8192, 16384],
+            }
+            for space_usage in space_usage[dataset]:
+                for sketches in ['0']: # TODO: reintroduce sketches
+                    index_params = {
+                        'dataset': dataset,
+                        'workload': 'local-top-k',
+                        'algorithm': 'PUFFINN',
+                        'threads': threads,
+                        'params': {
+                            'space_usage': space_usage,
+                            'hash_source': hash_source,
+                            'with_sketches': sketches,
+                            'deduplicate': '1'
+                        }
+                    }
+                    query_params = [
+                        {'k': k, 'recall': recall, 'method': 'LSHJoin'}
+                        for recall in [0.8, 0.9]
+                        for k in [1]
+                    ]
+                    run_multiple(index_params, query_params)
 
 
 
