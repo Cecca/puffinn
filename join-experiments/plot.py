@@ -2,7 +2,7 @@
 
 import sqlite3
 import numpy as np
-import altair as alt
+# import altair as alt
 import sys
 from scipy.spatial import ConvexHull
 import os
@@ -230,6 +230,42 @@ def plot_distance_histogram(path, k):
     plt.savefig(outfile)
 
 
+def plot_param_dep():
+    plotdir = os.path.join(BASE_DIR, "plots")
+    with get_db() as db:
+        data = pd.read_sql("""
+            select dataset, workload, k, algorithm, algorithm_version, params, threads,
+                   json_extract(params, '$.space_usage') * 1024.0 * 1024.0 as space_bytes, 
+                   json_extract(params, '$.space_usage') * 1024.0 * 1024.0 / size as bytes_per_point, 
+                   json_extract(params, '$.with_sketches') as with_sketches,
+                   json_extract(params, '$.deduplicate') as deduplicate,
+                   json_extract(params, '$.recall') as target_recall,
+                   recall
+                   time_index_s, time_join_s, time_index_s + time_join_s as time_total_s,
+                   size / (time_index_s + time_join_s) as points_per_sec
+            from recent natural join dataset_size
+             where json_extract(params, '$.prefix') is null
+               and algorithm = 'PUFFINN' 
+               and dataset != 'movielens-1M'
+               and k = 10
+               and workload = 'local-top-k';
+            """, db)
+        data = data.fillna(value={'with_sketches': False, 'deduplicate': False})
+    # print(data[['dataset', 'points_per_sec', 'bytes_per_point']])
+    for target_recall in [0.8, 0.9]:
+        data = data[data['target_recall'] == target_recall]
+        sns.lineplot(
+            x = 'bytes_per_point',
+            y = 'points_per_sec',
+            style = 'with_sketches',
+            hue = 'dataset',
+            markers = True,
+            data = data
+        )
+        plt.title('Throughput vs. memory at target recall {}'.format(target_recall))
+        plt.savefig(os.path.join(plotdir, 'qps-vs-mem-at-{}.png'.format(target_recall)))
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 2:
         import run
@@ -237,6 +273,7 @@ if __name__ == "__main__":
         for k in [1, 10, 100, 1000]:
             plot_distance_histogram(dataset_path, k)
     else:
-        plot_topk("global")
-        plot_topk("local")
+        plot_param_dep()
+        # plot_topk("global")
+        # plot_topk("local")
 
