@@ -103,6 +103,18 @@ MIGRATIONS = [
         dataset TEXT,
         size    INT
     )
+    """,
+    """
+    CREATE TABLE dimensionality (
+        dataset TEXT,
+        k       INT, 
+        lid_mean REAL, 
+        lid_median REAL, 
+        lid_min    REAL, 
+        lid_max    REAL, 
+        lid_25     REAL, 
+        lid_75     REAL
+    );
     """
 ]
 
@@ -1754,7 +1766,7 @@ if __name__ == "__main__":
             space_usage = {
                 'DeepImage': [32768, 65536],
                 'glove-200': [2048, 4096, 8192, 16384],
-                'Orkut': [16384, 32768],
+                'Orkut': [2048, 4906, 8192], #, 16384, 32768],
                 'DBLP': [2048, 4096, 8192, 16384],
             }
             for space_usage in space_usage[dataset]:

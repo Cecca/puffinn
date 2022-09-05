@@ -202,7 +202,7 @@ int main(void) {
     if (distance_type == "cosine" || distance_type == "angular") {
         run<puffinn::CosineSimilarity, puffinn::SimHash, std::vector<float>>();
     } else if (distance_type == "jaccard") {
-        run<puffinn::JaccardSimilarity, puffinn::MinHash, std::vector<uint32_t>>();
+        run<puffinn::JaccardSimilarity, puffinn::MinHash1Bit, std::vector<uint32_t>>();
     }
     std::cerr << "[c++] done" << std::endl;
 }

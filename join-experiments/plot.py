@@ -230,6 +230,57 @@ def plot_distance_histogram(path, k):
     plt.savefig(outfile)
 
 
+
+def plot_by_mem():
+    plotdir = os.path.join(BASE_DIR, "plots")
+    with get_db() as db:
+        data = pd.read_sql("""
+            select dataset, k, algorithm, params, json_extract(params, '$.space_usage') * 1024.0 * 1024.0 / size as bytes_per_vec, 
+                   recall, time_index_s, time_join_s, time_index_s + time_join_s as time_total_s 
+            from recent natural join dataset_size
+             where json_extract(params, '$.prefix') is null
+               and algorithm = 'PUFFINN'
+               and workload = 'local-top-k';
+            """, db)
+
+    data = data[data['bytes_per_vec'] < 100000]
+    ks = [1, 10]
+    datasets = [
+        t[0]
+        for t in db.execute("select distinct dataset from recent order by 1;").fetchall()
+    ]
+
+    k_radio = alt.binding_radio(options=ks, name='K: ')
+    # input_dropdown = alt.binding_checkbox(name='Dataset: ')
+    # selection = alt.selection_multi(fields=['dataset'], bind=input_dropdown)
+    k_selection = alt.selection_single(fields=['k'], bind=k_radio, empty='none')
+
+    chart = alt.Chart(
+        data
+    ).transform_filter(
+        k_selection
+    ).mark_line(point=True).encode(
+        x=alt.X('bytes_per_vec', type='quantitative'),
+        y=alt.Y('time_total_s', type='quantitative'),
+        color='dataset:N',
+        tooltip = [
+            'params:N'
+        ]
+    ).properties(
+        width=1000,
+        height=600,
+        title="Time vs. memory"
+    # ).add_selection(
+    #     selection
+    ).add_selection(
+        k_selection
+    ).add_selection(
+        alt.selection_interval(bind='scales')
+    ).interactive()
+    chart.save(os.path.join(plotdir, f"plot-local-by-mem.html"))
+
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 2:
         import run
@@ -237,6 +288,7 @@ if __name__ == "__main__":
         for k in [1, 10, 100, 1000]:
             plot_distance_histogram(dataset_path, k)
     else:
-        plot_topk("global")
-        plot_topk("local")
+        plot_by_mem()
+        # plot_topk("global")
+        # plot_topk("local")
 
