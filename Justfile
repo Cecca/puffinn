@@ -4,9 +4,8 @@ build:
   cmake --build build --config Debug --target PuffinnJoin
 
 check:
-  #!/bin/bash
   cmake --build build --config RelWithDebInfo --target PuffinnJoin
-  env OMP_NUM_THREADS=2 time build/PuffinnJoin < instructions.txt > result.dsv
+  env OMP_NUM_THREADS=56 build/PuffinnJoin < instructions.txt > result.dsv
 
 cache-misses exe:
   perf record --call-graph dwarf -e cache-misses -p $(pgrep {{exe}})
