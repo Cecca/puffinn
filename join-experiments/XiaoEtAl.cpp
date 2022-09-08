@@ -112,6 +112,7 @@ std::vector<Pair> topk(std::vector<std::vector<uint32_t>> &dataset, size_t unive
   }
   std::make_heap(output.begin(), output.end(), cmp_pairs);
   sim_threshold = output.front().similarity;
+  std::cerr << "Similarity threshold " << sim_threshold << std::endl;
 
   // Initialize the events queue
   std::vector<Event> events;
@@ -128,6 +129,7 @@ std::vector<Pair> topk(std::vector<std::vector<uint32_t>> &dataset, size_t unive
   // Initialize the set to hold already seen pairs
   std::unordered_set<std::pair<size_t, size_t>, pair_hash> already_seen;
   
+  size_t cnt = 0;
   // Process all events
   while (!events.empty())
   {
@@ -135,6 +137,7 @@ std::vector<Pair> topk(std::vector<std::vector<uint32_t>> &dataset, size_t unive
     std::pop_heap(events.begin(), events.end(), cmp_events);
     Event e = events.back();
     events.pop_back();
+    cnt++;
 
     sim_threshold = output.front().similarity;
     // Check stopping condition
@@ -171,12 +174,24 @@ std::vector<Pair> topk(std::vector<std::vector<uint32_t>> &dataset, size_t unive
               output.pop_back();
             }
 
-            sim_threshold = output.front().similarity;
+            if (output.front().similarity > sim_threshold) {
+              sim_threshold = output.front().similarity;
+              std::cerr << "Similarity threshold " 
+                        << sim_threshold 
+                        << " (" << cnt << " events)"
+                        << std::endl;
+            }
             // Mark the pair as already seen
             already_seen.insert(std::make_pair(a, b));
           }
         }
       }
+    }
+    if (cnt % 100000 == 0) {
+      std::cerr << "Similarity threshold " 
+                << sim_threshold 
+                << " (" << cnt << " events)"
+                << std::endl;
     }
 
     // Index the current prefix
