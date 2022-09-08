@@ -820,6 +820,9 @@ namespace puffinn {
                                     actual_active++;
                                 }
                             }
+                            /* std::cerr << "Active left: " << left_active */
+                            /*           << "Active actual: " << actual_active */
+                            /*           << std::endl; */
                             if (left_active > 0 || actual_active > 0) {
                                 for (auto r = segments[i][j-1]; r < segments[i][j]; r++) {
                                     for (auto  s = segments[i][j]; s < segments[i][j + 1]; s++) {
