@@ -662,6 +662,9 @@ namespace puffinn {
             TIMER_START(pre_initialization);
             std::vector<std::vector<uint32_t>> res;
 
+            // the number of pairs that would be evaluated by the brute force algorithm.
+            size_t brute_force_evaluations = dataset.get_size() * (dataset.get_size() - 1) / 2;
+
             bool has_sketches = filterer.size() > 0;
             bool deduplicate = !deduplicator.is_empty();
 
@@ -792,6 +795,25 @@ namespace puffinn {
                 /* } */
                 std::vector<std::vector<uint32_t>> new_segments (lsh_maps.size());
 
+                // Count the number of pairs to be checked at this depth. If comparable to
+                // the number of distance evaluations that would be carried out by the 
+                // brute force, stop.
+                size_t n_pairs_to_check = 0;
+                for (size_t i = 0; i < lsh_maps.size(); i++) {
+                    for (size_t j = 2; j < segments[i].size() - 1; j++) {
+                        auto left = (lsh_maps[i].hashes[segments[i][j - 1]]) & prefix_mask;
+                        auto actual = (lsh_maps[i].hashes[segments[i][j]]) & prefix_mask;
+                        if (left == actual) {
+                            size_t n_left = segments[i][j] - segments[i][j-1];
+                            size_t n_actual = segments[i][j+1] - segments[i][j];
+                            n_pairs_to_check += n_left * n_actual;
+                        }
+                    }
+                }
+                std::cerr << "Prefix " << depth << " checking " << n_pairs_to_check 
+                          << " ("
+                          << (100.0 * n_pairs_to_check / brute_force_evaluations)
+                          << "% of brute force: " << brute_force_evaluations << ")" << std::endl;
 
                 TIMER_START(join_segments);
                 #pragma omp parallel for schedule(dynamic)
