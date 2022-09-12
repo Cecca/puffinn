@@ -493,6 +493,7 @@ namespace puffinn {
                         output.insert(r, s, dist);
                     }
                 }
+                active[i] = false;
             }
         }
 
@@ -714,6 +715,8 @@ namespace puffinn {
 
             size_t sketch_discarded_cnt = 0;
             size_t collision_cnt = 0;
+            float largest_unconfirmed_similarity = 1.0;
+            float largest_unconfirmed_failure_prob = 1.0;
 
             // Store segments efficiently (?).
             // indices in segments[i][j-1], ..., segments[i][j]-1 in lsh_maps[i]
@@ -730,8 +733,6 @@ namespace puffinn {
                 size_t tl_collision_cnt = 0;
                 int tid = omp_get_thread_num();
                 segments[i].reserve(dataset.get_size() / 5); // Preallocate for efficiency
-
-                /* std::ofstream myfile ("prefixmap" + i + ".txt"); */
 
                 segments[i].push_back(0);
                 size_t largest_bucket = 0;
@@ -803,10 +804,15 @@ namespace puffinn {
                 if (active_count == 0) {
                     break;
                 }
-                /* if (active_count <= brute_force_perc * dataset.get_size()) { */
-                /*     brute_force_some(active, tl_maxbuffers[0]); */
-                /*     break; */
-                /* } */
+                if (active_count <= brute_force_perc * dataset.get_size()) {
+                    brute_force_some(active, tl_maxbuffers[0]);
+                    break;
+                }
+                if (largest_unconfirmed_similarity < 0.05) {
+                    std::cerr << "Brute forcing last points with dissimilar nearest neighbors" << std::endl;
+                    brute_force_some(active, tl_maxbuffers[0]);
+                    break;
+                }
                 std::vector<std::vector<uint32_t>> new_segments (lsh_maps.size());
 
                 // Count the number of pairs to be checked at this depth. If comparable to
@@ -834,9 +840,9 @@ namespace puffinn {
                 TIMER_START(join_segments);
                 #pragma omp parallel for schedule(dynamic)
                 for (size_t i = 0; i < lsh_maps.size(); i++) {
-                    #pragma omp critical
-                    std::cerr << "Segments for repetition " << i 
-                              << ": " << segments[i].size() << std::endl;
+                    /* #pragma omp critical */
+                    /* std::cerr << "Segments for repetition " << i */ 
+                    /*           << ": " << segments[i].size() << std::endl; */
 
                     size_t tl_sketch_discarded_cnt = 0;
                     size_t tl_collision_cnt = 0;
@@ -976,8 +982,8 @@ namespace puffinn {
 
                 TIMER_START(inactive_nodes_removal);
                 size_t removed_nodes = 0;
-                float largest_unconfirmed_similarity = 0.0;
-                float largest_unconfirmed_failure_prob = 0.0;
+                largest_unconfirmed_similarity = 0.0;
+                largest_unconfirmed_failure_prob = 0.0;
                 g_performance_metrics.start_timer(Computation::Filtering);
                 // remove inactive nodes
                 for (size_t v=0; v < dataset.get_size(); v++) {
