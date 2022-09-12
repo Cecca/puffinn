@@ -16,7 +16,10 @@ find_package(HDF5)
 if (HDF5_FOUND)
    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${HDF5_CXX_FLAGS}")
 endif()
+
 add_subdirectory("external/HighFive")
+
+include_directories("external/pmlsh")
 
 include_directories("include")
 
@@ -48,6 +51,11 @@ endif()
 add_executable(LSBTree "join-experiments/lsb_tree.cpp")
 if (OpenMP_FOUND)
     target_link_libraries(LSBTree ${OpenMP_CXX_LIBRARIES} HighFive)
+endif()
+
+add_executable(PMLSH "external/pmlsh/pmlsh/PM_Tree.cpp" "external/pmlsh/pmlsh/MyFunc.cpp" "external/pmlsh/pmlsh/Pivot.cpp" "external/pmlsh/pmlsh/Metric.cpp"  "external/pmlsh/pmlsh/pmLsh.cpp" "external/pmlsh/pmlsh/Config.cpp" "external/pmlsh/pmlsh/E2LSH.cpp" "external/pmlsh/pmlsh/Real_Result.cpp" "external/pmlsh/pmlsh/DataMetric.cpp" "join-experiments/pmlsh.cpp")
+if (OpenMP_FOUND)
+    target_link_libraries(PMLSH ${OpenMP_CXX_LIBRARIES} HighFive)
 endif()
 
 

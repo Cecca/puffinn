@@ -25,8 +25,8 @@ import shlex
 import os
 import hashlib
 import sqlite3
-import faiss
-import falconn
+#import faiss
+#import falconn
 import json
 import random
 import numba
@@ -1369,9 +1369,10 @@ ALGORITHMS = {
     'faiss-IVF':       lambda: (FaissIVF(),                                 1),
     'pynndescent':     lambda: (PyNNDescent(),                              1),
     'falconn':         lambda: (FALCONN(),                                  2),
+    'PMLSH':           lambda: (SubprocessAlgorithm(["bin/PMLSH"]),       1),
     # Global top-k baselines
     'XiaoEtAl':        lambda: (SubprocessAlgorithm(["build/XiaoEtAl"]),    1),
-    'LSBTree':         lambda: (SubprocessAlgorithm(["build/LSBTree"]),     1)
+    'LSBTree':         lambda: (SubprocessAlgorithm(["build/LSBTree"]),     1),
 }
 
 # =============================================================================
@@ -1618,22 +1619,22 @@ if __name__ == "__main__":
     if not os.path.isdir(BASE_DIR):
         os.mkdir(BASE_DIR)
     
-    for dummy_just_for_scoping in [0]:
-        index_params = {
-            'dataset': 'glove-200',
-            'workload': 'local-top-k',
-            'algorithm': 'BruteForceLocal',
-            'params': {'prefix': 10000}
-        } 
-        query_params = [
-            {'k': k}
-            for k in [1000]
-        ]
+    # for dummy_just_for_scoping in [0]:
+    #     index_params = {
+    #         'dataset': 'glove-200',
+    #         'workload': 'local-top-k',
+    #         'algorithm': 'BruteForceLocal',
+    #         'params': {'prefix': 10000}
+    #     } 
+    #     query_params = [
+    #         {'k': k}
+    #         for k in [1000]
+    #     ]
 
-        run_multiple(index_params, query_params)
+    #     run_multiple(index_params, query_params)
     
-    with get_db() as db:
-        compute_recalls(db)
+    # with get_db() as db:
+    #     compute_recalls(db)
 
     # run_config({
     #     'dataset': 'NYTimes',
@@ -1660,21 +1661,37 @@ if __name__ == "__main__":
 
     threads = 56
 
+    for dataset in ['random-float-10k']:
+        index_params = {
+            'dataset': dataset,
+            'workload': 'local-top-k',
+            'algorithm': 'PMLSH',
+            'params': {}
+        } 
+        query_params = [
+            {'k': k, 'radius': radius}
+            for k in [10]
+            for radius in [0.5, 1.0, 2.0, 3.0]
+        ]
+        run_multiple(index_params, query_params)
+
+
     for dataset in ['AOL', 'glove-200', 'DeepImage', 'DBLP', 'Orkut', 'movielens-20M']:
+        pass
         # ----------------------------------------------------------------------
         # Xiao et al. global top-k
-        if dataset in ['AOL', 'DBLP', "Orkut", "movielens-20M"]:
-            index_params = {
-                'dataset': dataset,
-                'workload': 'global-top-k',
-                'algorithm': 'XiaoEtAl',
-                'params': {}
-            } 
-            query_params = [
-                {'k': k}
-                for k in [1, 10, 100]
-            ]
-            run_multiple(index_params, query_params)
+#        if dataset in ['AOL', 'DBLP', "Orkut", "movielens-20M"]:
+#            index_params = {
+#                'dataset': dataset,
+#                'workload': 'global-top-k',
+#                'algorithm': 'XiaoEtAl',
+#                'params': {}
+#            } 
+#            query_params = [
+#                {'k': k}
+#                for k in [1, 10, 100]
+#            ]
+#            run_multiple(index_params, query_params)
 
     #     # ----------------------------------------------------------------------
     #     # PUFFINN global top-k
