@@ -1632,8 +1632,8 @@ if __name__ == "__main__":
 
         run_multiple(index_params, query_params)
     
-    with get_db() as db:
-        compute_recalls(db)
+    # with get_db() as db:
+    #     compute_recalls(db)
 
     # run_config({
     #     'dataset': 'NYTimes',
@@ -1660,27 +1660,29 @@ if __name__ == "__main__":
 
     threads = 56
 
-    for dataset in ['AOL', 'glove-200', 'DeepImage', 'DBLP', 'Orkut', 'movielens-20M']:
+    for dataset in ['glove-200', 'DeepImage']:
+        pass
         # ----------------------------------------------------------------------
         # Xiao et al. global top-k
-        if dataset in ['AOL', 'DBLP', "Orkut", "movielens-20M"]:
-            index_params = {
-                'dataset': dataset,
-                'workload': 'global-top-k',
-                'algorithm': 'XiaoEtAl',
-                'params': {}
-            } 
-            query_params = [
-                {'k': k}
-                for k in [1, 10, 100]
-            ]
-            run_multiple(index_params, query_params)
+        # if dataset in ['AOL', 'DBLP', "Orkut", "movielens-20M"]:
+        #     index_params = {
+        #         'dataset': dataset,
+        #         'workload': 'global-top-k',
+        #         'algorithm': 'XiaoEtAl',
+        #         'params': {}
+        #     } 
+        #     query_params = [
+        #         {'k': k}
+        #         for k in [1, 10, 100]
+        #     ]
+        #     run_multiple(index_params, query_params)
 
-    #     # ----------------------------------------------------------------------
-    #     # PUFFINN global top-k
+        # ----------------------------------------------------------------------
+        # PUFFINN global top-k
         # for hash_source in ['Independent']:
         #     space_usage = {
         #         'DeepImage': [32768, 65536],
+        #         'AOL': [1024, 2048, 4096],
         #         'glove-200': [2048, 4096, 8192, 16384],
         #         'Orkut': [16384, 32768],
         #         'DBLP': [2048, 4096, 8192, 16384],
@@ -1706,25 +1708,25 @@ if __name__ == "__main__":
 
     # ----------------------------------------------------------------------
     # LSB-Tree global top-k
-    # for dataset in ['glove-25']:
-    #     for m in [4, 8, 16]:
-    #         for w in [1, 2, 4]:
-    #             index_params = {
-    #                 'dataset': dataset,
-    #                 'workload': 'global-top-k',
-    #                 'algorithm': 'LSBTree',
-    #                 'params': {
-    #                     'm': m,
-    #                     'w': w
-    #                 }
-    #             }
-    #             join_params = [
-    #                 {'k': k}
-    #                 for k in [10]
-    #             ]
-    #             run_multiple(index_params, join_params)
+    for dataset in ['glove-200']:
+        for m in [8]:
+            for w in [0.1]:
+                index_params = {
+                    'dataset': dataset,
+                    'workload': 'global-top-k',
+                    'algorithm': 'LSBTree',
+                    'params': {
+                        'm': m,
+                        'w': w
+                    }
+                }
+                join_params = [
+                    {'k': k}
+                    for k in [1, 10]
+                ]
+                run_multiple(index_params, join_params)
 
-    for dataset in ['AOL']: #['glove-200', 'DeepImage']:
+    for dataset in []: #['glove-200', 'DeepImage']:
         pass
         # ----------------------------------------------------------------------
         # pynndescent
@@ -1820,34 +1822,34 @@ if __name__ == "__main__":
 
         # ----------------------------------------------------------------------
         # PUFFINN local top-k
-        # for hash_source in ['Independent']:
-        #     space_usage = {
-        #         'DeepImage': [32768, 65536],
-        #         'glove-200': [2048, 4096, 8192, 16384],
-        #         'Orkut': [2048, 4906, 8192], #, 16384, 32768],
-        #         'DBLP': [2048, 4096, 8192, 16384],
-        #         'AOL': [8129]#, 32768, 65536]
-        #     }
-        #     for space_usage in space_usage[dataset]:
-        #         for sketches in ['0']: # TODO: reintroduce sketches
-        #             index_params = {
-        #                 'dataset': dataset,
-        #                 'workload': 'local-top-k',
-        #                 'algorithm': 'PUFFINN',
-        #                 'threads': threads,
-        #                 'params': {
-        #                     'space_usage': space_usage,
-        #                     'hash_source': hash_source,
-        #                     'with_sketches': sketches,
-        #                     'deduplicate': '0'
-        #                 }
-        #             }
-        #             query_params = [
-        #                 {'k': k, 'recall': recall, 'method': 'LSHJoin'}
-        #                 for recall in [0.8]
-        #                 for k in [1]
-        #             ]
-        #             run_multiple(index_params, query_params)
+        for hash_source in ['Independent']:
+            space_usage = {
+                'DeepImage': [32768, 65536],
+                'glove-200': [2048, 4096, 8192, 16384],
+                'Orkut': [16384, 32768],
+                'DBLP': [2048, 4096, 8192, 16384],
+                'AOL': [32768, 65536]
+            }
+            for space_usage in space_usage[dataset]:
+                for sketches in ['0']: # TODO: reintroduce sketches
+                    index_params = {
+                        'dataset': dataset,
+                        'workload': 'local-top-k',
+                        'algorithm': 'PUFFINN',
+                        'threads': threads,
+                        'params': {
+                            'space_usage': space_usage,
+                            'hash_source': hash_source,
+                            'with_sketches': sketches,
+                            'deduplicate': '1'
+                        }
+                    }
+                    query_params = [
+                        {'k': k, 'recall': recall, 'method': 'LSHJoin'}
+                        for recall in [0.8]
+                        for k in [1]
+                    ]
+                    run_multiple(index_params, query_params)
 
 
 
