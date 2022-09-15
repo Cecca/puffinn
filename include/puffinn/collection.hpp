@@ -467,7 +467,8 @@ namespace puffinn {
             std::vector<std::vector<uint32_t>> res(dataset.get_size());
             #pragma omp parallel for schedule(dynamic)
             for (size_t i = 0; i < dataset.get_size(); i++) {
-                res[i] = search_formatted_query(dataset[i], k, recall, filter_type);
+                res[i] = search_formatted_query(dataset[i], k + 1, recall, filter_type);
+                res[i].erase(res[i].begin());
             }
             return res;
         }
