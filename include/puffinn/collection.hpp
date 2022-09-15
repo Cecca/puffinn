@@ -461,9 +461,13 @@ namespace puffinn {
             float recall,
             FilterType filter_type = FilterType::Default
         ) const {
-            std::vector<std::vector<uint32_t>> res;
+            if (filterer.size() == 0) {
+                throw std::runtime_error("Sketches are required");
+            }
+            std::vector<std::vector<uint32_t>> res(dataset.get_size());
+            #pragma omp parallel for schedule(dynamic)
             for (size_t i = 0; i < dataset.get_size(); i++) {
-                res.push_back(search_formatted_query(dataset[i], k, recall, filter_type));
+                res[i] = search_formatted_query(dataset[i], k, recall, filter_type);
             }
             return res;
         }

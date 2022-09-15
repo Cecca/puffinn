@@ -2,7 +2,7 @@
 
 import sqlite3
 import numpy as np
-# import altair as alt
+import altair as alt
 import sys
 from scipy.spatial import ConvexHull
 import os
@@ -110,21 +110,22 @@ def plot_topk(workload):
 
     db = get_db()
     all = pd.read_sql(f"""
-        select dataset, workload, k, algorithm, algorithm_version, params, threads, json_extract(params, '$.hash_source') as hash_source, 
+        select dataset, workload, k, algorithm, algorithm_version, params, threads, json_extract(params, '$.method') as method, 
                recall, time_index_s, time_join_s, time_index_s + time_join_s as time_total_s 
         from recent 
          where json_extract(params, '$.prefix') is null
            and workload = '{workload}-top-k';
         """, db)
-    all = all.fillna(value={'hash_source': ''})
-    # all['algorithm'] = all['algorithm'] + all['hash_source']
+    all = all.fillna(value={'method': ''})
+    all['algorithm'] = all['algorithm'] + all['method']
     print(all)
     data = get_pareto(all)
 
-    algorithms = [
-        t[0]
-        for t in db.execute(f"select distinct algorithm from recent where workload = '{workload}-top-k' order by 1;").fetchall()
-    ]
+    # algorithms =[
+    #     t[0]
+    #     for t in db.execute(f"select distinct algorithm from recent where workload = '{workload}-top-k' order by 1;").fetchall()
+    # ]
+    algorithms = data["algorithm"].unique()
     colors = [
       "#5778a4",
       "#e49444",
@@ -275,5 +276,5 @@ if __name__ == "__main__":
     else:
         plot_param_dep()
         # plot_topk("global")
-        # plot_topk("local")
+        plot_topk("local")
 
