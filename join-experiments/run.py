@@ -1661,7 +1661,7 @@ if __name__ == "__main__":
 
     threads = 56
 
-    for dataset in ['random-float-10k']:
+    for dataset in ['glove-200-100k']:
         index_params = {
             'dataset': dataset,
             'workload': 'local-top-k',
@@ -1671,13 +1671,13 @@ if __name__ == "__main__":
         query_params = [
             {'k': k, 'radius': radius}
             for k in [10]
-            for radius in [0.5, 1.0, 2.0, 3.0]
+            for radius in [0.25, 0.5, 1.0, 2.0]
         ]
         run_multiple(index_params, query_params)
 
 
     for dataset in ['glove-200', 'DeepImage', 'DBLP', 'Orkut']:
-        pass
+        continue 
         # ----------------------------------------------------------------------
         # Xiao et al. global top-k
         # if dataset in ['AOL', 'DBLP', "Orkut", "movielens-20M"]:
@@ -1742,7 +1742,7 @@ if __name__ == "__main__":
         #         run_multiple(index_params, join_params)
 
     for dataset in ['glove-200', 'DeepImage']:
-        pass
+        continue 
         # ----------------------------------------------------------------------
         # pynndescent
         # for n_neighbors in [20, 30, 50, 100]:
@@ -1897,6 +1897,6 @@ if __name__ == "__main__":
 
 
 
-    # with get_db() as db:
-    #     compute_recalls(db)
+    with get_db() as db:
+        compute_recalls(db)
 
