@@ -461,9 +461,14 @@ namespace puffinn {
             float recall,
             FilterType filter_type = FilterType::Default
         ) const {
-            std::vector<std::vector<uint32_t>> res;
+            if (filterer.size() == 0) {
+                throw std::runtime_error("Sketches are required");
+            }
+            std::vector<std::vector<uint32_t>> res(dataset.get_size());
+            #pragma omp parallel for schedule(dynamic)
             for (size_t i = 0; i < dataset.get_size(); i++) {
-                res.push_back(search_formatted_query(dataset[i], k, recall, filter_type));
+                res[i] = search_formatted_query(dataset[i], k + 1, recall, filter_type);
+                res[i].erase(res[i].begin());
             }
             return res;
         }
@@ -493,6 +498,7 @@ namespace puffinn {
                         output.insert(r, s, dist);
                     }
                 }
+                active[i] = false;
             }
         }
 
@@ -663,7 +669,11 @@ namespace puffinn {
             std::vector<std::vector<uint32_t>> res;
 
             // the number of pairs that would be evaluated by the brute force algorithm.
-            size_t brute_force_evaluations = dataset.get_size() * (dataset.get_size() - 1) / 2;
+            size_t n = dataset.get_size();
+            size_t brute_force_evaluations = (n * (n-1)) / 2;
+            std::cerr << "Dataset of size " << n
+                      << " overall pairs " << brute_force_evaluations
+                      << std::endl;
 
             bool has_sketches = filterer.size() > 0;
             bool deduplicate = !deduplicator.is_empty();
@@ -708,6 +718,11 @@ namespace puffinn {
             }
             TIMER_STOP(maxbuffer_population);
 
+            size_t sketch_discarded_cnt = 0;
+            size_t collision_cnt = 0;
+            float largest_unconfirmed_similarity = 1.0;
+            float largest_unconfirmed_failure_prob = 1.0;
+
             // Store segments efficiently (?).
             // indices in segments[i][j-1], ..., segments[i][j]-1 in lsh_maps[i]
             // share the same hash code.
@@ -716,14 +731,17 @@ namespace puffinn {
             g_performance_metrics.start_timer(Computation::SearchInit);
 
             TIMER_START(initial_scan);
-            std::cerr << "Initial scan start" << std::endl;
             // Set up data structures. Create segments for initial hash codes.
             #pragma omp parallel for schedule(dynamic)
             for (size_t i = 0; i < lsh_maps.size(); i++) {
+                size_t tl_sketch_discarded_cnt = 0;
+                size_t tl_collision_cnt = 0;
                 int tid = omp_get_thread_num();
                 segments[i].reserve(dataset.get_size() / 5); // Preallocate for efficiency
+
                 segments[i].push_back(0);
                 size_t largest_bucket = 0;
+                size_t self_join_pairs = 0;
                 for (size_t j = 1; j < lsh_maps[i].hashes.size(); j++) {
                     if (lsh_maps[i].hashes[j] != lsh_maps[i].hashes[j-1]) {
                         size_t size = j - segments[i][segments[i].size() - 1];
@@ -731,6 +749,7 @@ namespace puffinn {
                         if (size > largest_bucket) {
                             largest_bucket = size ;
                         }
+                        self_join_pairs += (size * (size-1)) / 2;
                     }
                 }
 
@@ -740,6 +759,8 @@ namespace puffinn {
                         << segments[i].size() 
                         <<  " segments with largest of size "
                         << largest_bucket
+                        << " pairs to check "
+                        << self_join_pairs
                         << std::endl;
                 // Carry out initial all-to-all comparisons within a segment.
                 // We leave out the first and last segment since it's filled up with filler elements.
@@ -749,6 +770,7 @@ namespace puffinn {
                         for (auto s = r+1; s < range.second; s++) {
                             auto R = *r;
                             auto S = *s;
+                            tl_collision_cnt++;
                             if (deduplicate && deduplicator.compute_at(R, S, MAX_HASHBITS) != i) {
                                 // skip comparison if this pair should be computed in another repetition
                                 continue;
@@ -769,30 +791,33 @@ namespace puffinn {
                     }
                 }
                 std::cerr << "Computed " << dcnt << " sims" << std::endl;
+                #pragma omp atomic
+                collision_cnt += tl_collision_cnt;
             }
             g_performance_metrics.store_time(Computation::SearchInit);
-            std::cerr << "Initial scan done (" << g_performance_metrics.get_total_time(Computation::SearchInit) << ")" << std::endl;
             TIMER_STOP(initial_scan);
-
-            size_t sketch_discarded_cnt = 0;
-            size_t collision_cnt = 0;
 
             uint32_t prefix_mask = 0xffffffff;
             for (int depth = MAX_HASHBITS; depth >= 0; depth--) {
                 // check current level
                 g_performance_metrics.start_timer(Computation::Search);
                 TIMER_START(count_active);
-                std::cerr << "Checking level " << depth << std::endl;
+                std::cerr << "----------------- Level " << depth << std::endl;
                 size_t active_count = count_true(active);
                 TIMER_STOP(count_active);
                 std::cerr << "Active nodes: " << active_count << std::endl;
                 if (active_count == 0) {
                     break;
                 }
-                /* if (active_count <= brute_force_perc * dataset.get_size()) { */
-                /*     brute_force_some(active, tl_maxbuffers[0]); */
-                /*     break; */
-                /* } */
+                if (active_count <= brute_force_perc * dataset.get_size()) {
+                    brute_force_some(active, tl_maxbuffers[0]);
+                    break;
+                }
+                if (largest_unconfirmed_similarity < 0.05) {
+                    std::cerr << "Brute forcing last points with dissimilar nearest neighbors" << std::endl;
+                    brute_force_some(active, tl_maxbuffers[0]);
+                    break;
+                }
                 std::vector<std::vector<uint32_t>> new_segments (lsh_maps.size());
 
                 // Count the number of pairs to be checked at this depth. If comparable to
@@ -810,19 +835,33 @@ namespace puffinn {
                         }
                     }
                 }
-                std::cerr << "Prefix " << depth << " checking " << n_pairs_to_check 
+                std::cerr << "Prefix " << depth << " checking " 
+                          << n_pairs_to_check 
                           << " ("
                           << (100.0 * n_pairs_to_check / brute_force_evaluations)
                           << "% of brute force: " << brute_force_evaluations << ")" << std::endl;
 
+                size_t old_collision_cnt = collision_cnt;
                 TIMER_START(join_segments);
                 #pragma omp parallel for schedule(dynamic)
                 for (size_t i = 0; i < lsh_maps.size(); i++) {
+                    /* #pragma omp critical */
+                    /* std::cerr << "Segments for repetition " << i */ 
+                    /*           << ": " << segments[i].size() << std::endl; */
+
                     size_t tl_sketch_discarded_cnt = 0;
                     size_t tl_collision_cnt = 0;
                     int tid = omp_get_thread_num();
                     // This push is safe to do in parallel because each entry of `new_segments` is touched by only one thread
                     new_segments[i].push_back(0); 
+
+                    /* std::stringstream ss; */
+                    /* ss << "segments: [ " */
+                    /* for (auto seg : segments[i]) { */
+                    /*     ss << seg << " "; */
+                    /* } */
+                    /* ss << "]"; */
+                    /* std::cerr << ss << std::endl; */
 
                     // check each pair of adjacent segments in lsh_maps[i] in ``depth``.
                     for (size_t j = 2; j < segments[i].size() - 1; j++) {
@@ -923,6 +962,11 @@ namespace puffinn {
                     collision_cnt += tl_collision_cnt;
                 }
                 TIMER_STOP(join_segments);
+                std::cerr << "Collisions checked " 
+                          << collision_cnt
+                          << " in this iteration "
+                          << (collision_cnt - old_collision_cnt)
+                          << std::endl;
 
                 TIMER_START(reconcile_buffers);
                 // accumulate all the information of a node in the first thread local buffer,
@@ -942,7 +986,9 @@ namespace puffinn {
                 g_performance_metrics.store_time(Computation::Search);   
 
                 TIMER_START(inactive_nodes_removal);
-                std::cerr << " Removing inactive nodes." << std::endl;
+                size_t removed_nodes = 0;
+                largest_unconfirmed_similarity = 0.0;
+                largest_unconfirmed_failure_prob = 0.0;
                 g_performance_metrics.start_timer(Computation::Filtering);
                 // remove inactive nodes
                 for (size_t v=0; v < dataset.get_size(); v++) {
@@ -968,10 +1014,18 @@ namespace puffinn {
                             }
                             if (failure_prob <= 1-recall) {
                                 active[v] = false;
+                                removed_nodes++;
+                            } else if (kth_similarity > largest_unconfirmed_similarity) {
+                                largest_unconfirmed_similarity = kth_similarity;
+                                largest_unconfirmed_failure_prob = failure_prob;
                             }
                         }
                     }
                 }
+                std::cerr << "Removed " << removed_nodes << " points." 
+                          << " Largest unconfirmed " << largest_unconfirmed_similarity
+                          << " with failure probability " << largest_unconfirmed_failure_prob
+                          << std::endl;
                 TIMER_STOP(inactive_nodes_removal);
                 g_performance_metrics.store_time(Computation::Filtering);
 
@@ -979,6 +1033,13 @@ namespace puffinn {
                 segments = new_segments;
                 prefix_mask <<= 1;
             }
+            size_t active_count = count_true(active);
+            if (active_count > 0) {
+                std::cerr << "FATAL: There are still " << active_count
+                          << " active nodes " << std::endl;
+                throw 1;
+            }
+            
             g_performance_metrics.store_time(Computation::Total);
             std::cerr << "total time " << g_performance_metrics.get_total_time(Computation::Total)
                       << " of which: " 

@@ -19,6 +19,28 @@
 #include "puffinn.hpp"
 #include "puffinn/performance.hpp"
 
+class Progress {
+  std::string prefix;
+  uint64_t every;
+  uint64_t last_log;
+  uint64_t count;
+
+  void log() const {
+    std::cerr << prefix << count << std::endl;
+  }
+
+public:
+  Progress(std::string prefix, uint64_t every): prefix(prefix), every(every), last_log(0), count(0) {}
+
+  void update(uint64_t x) {
+    count += x;
+    if (count - last_log >= every) {
+      log();
+      last_log = count;
+    }
+  }
+};
+
 struct Pair
 {
   size_t a;
@@ -97,14 +119,21 @@ std::pair<std::vector<std::pair<uint64_t, size_t>>, size_t> build_index(std::vec
   std::vector<float> b; // the random offsets
 
   for (size_t i=0; i<m; i++) {
-    std::cerr << "random vector " << i << ": ";
+    // std::cerr << "random vector " << i << ": ";
     std::vector<float> v;
+    float s = 0.0;
     for (size_t j=0; j<d; j++) {
       float x = normal(rng);
       v.push_back(x);
-      std::cerr << x << " ";
+      s += x*x;
+      // std::cerr << x << " ";
     }
-    std::cerr << std::endl;
+    float norm = std::sqrt(s);
+    for (size_t j=0; j<d; j++) {
+      v[j] /= norm;
+    }
+
+    // std::cerr << std::endl;
     a.push_back(v);
     b.push_back(uniform(rng));
   }
@@ -155,7 +184,9 @@ std::pair<std::vector<std::pair<uint64_t, size_t>>, size_t> build_index(std::vec
   }
   std::cerr << "we need " << coord_grid_bits << " bits to represent each gridded coordinate" << std::endl;
 
-  assert(m * coord_grid_bits <= 64);
+  if(m * coord_grid_bits > 64) {
+    throw std::runtime_error("too many bits to interleave");
+  }
 
   std::vector<uint64_t> gridded;
   std::vector<std::pair<uint64_t, size_t>> index;
@@ -186,7 +217,7 @@ size_t lcp(uint64_t a, uint64_t b) {
 
 std::pair<size_t, size_t> find_segment(std::vector<std::pair<uint64_t, size_t>> & index, size_t from) {
   size_t to = from+1;
-  while (to < index.size() && index[to].first == index[from].first) {
+  while ((to < index.size()) && (index[to].first == index[from].first)) {
     to++;
   }
   return std::make_pair(from, to);
@@ -195,6 +226,7 @@ std::pair<size_t, size_t> find_segment(std::vector<std::pair<uint64_t, size_t>> 
 void merge(std::vector<Pair> & a, std::vector<Pair> & b, size_t k) {
   for (Pair p : b) {
     a.push_back(p);
+    std::push_heap(a.begin(), a.end(), cmp_pairs);
     if (a.size() > k) {
       std::pop_heap(a.begin(), a.end(), cmp_pairs);
       a.pop_back();
@@ -212,9 +244,16 @@ std::vector<Pair> cp3(
   int nthreads = omp_get_max_threads();
   std::vector<std::vector<Pair>> tl_result(nthreads);
 
+  Progress progress("++ ", 100);
+
   std::pair<size_t, size_t> current = find_segment(index, 0);
   while (current.first < index.size()) {
-    std::cerr << " current block from " << current.first << " to " << current.second << " with " << (current.second - current.first) << " elements" << std::endl;
+    progress.update(current.second - current.first);
+    /* std::cerr << " current block from " << current.first << " to " << current.second << " with " << (current.second - current.first) << " elements" << std::endl; */
+    /* std::cerr << "Start zindex " << std::bitset<64>(index[current.first].first) */
+    /*           << std::endl */
+    /*           << "  End zindex " << std::bitset<64>(index[current.second-1].first) */
+    /*           << std::endl; */
     // Self join of the current node
     #pragma omp parallel for
     for (size_t i=current.first; i < current.second; i++) {
@@ -238,9 +277,17 @@ std::vector<Pair> cp3(
 
     // explore a few of the next nodes
     float best = std::numeric_limits<float>::infinity();
+    if (tl_result[0].size() == k) {
+      best = tl_result[0].front().distance;
+    }
     std::pair<size_t, size_t> next = find_segment(index, current.second);
+    Progress inner_progress("---- ", 100000);
     while (next.first < index.size()) {
-      // std::cerr << "   next block from " << next.first << " to " << next.second << " " << std::endl;
+      inner_progress.update(next.second - next.first);
+      /* std::cerr << "   next block from " << next.first << " to " */
+      /*           << next.second << " with " */
+      /*           << (next.second - next.first) << " elements" */
+      /*           << std::endl; */
       // check if the next segment is too far away
       if (tl_result[0].size() == k) {
         float d = tl_result[0].front().distance;
@@ -251,7 +298,7 @@ std::vector<Pair> cp3(
       }
       float block_bound = std::pow(2.0, 1 + coord_grid_bits - std::floor(lcp(index[current.first].first, index[next.first].first) / m));
       if (best < block_bound) {
-        std::cerr << " early stopping loop block bound=" << block_bound << std::endl;
+        //std::cerr << " early stopping loop block bound=" << block_bound << std::endl;
         break;
       }
     

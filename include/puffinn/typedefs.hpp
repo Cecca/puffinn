@@ -10,7 +10,7 @@ namespace puffinn {
     using FilterLshDatatype = uint64_t;
 
     // Number of bits used in hashes.
-    const static unsigned int MAX_HASHBITS = 32;
+    const static unsigned int MAX_HASHBITS = 24;
     // The hash_pool concatenates hashes into a type twice as large to avoid overflow errors.
     // TODO: Check how to avoid this "twice as large": using 64 bits to store 24-bits hash values.
     // To me it seems that when inserting into a prefix-map, 64 bits are automatically 
