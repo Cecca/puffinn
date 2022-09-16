@@ -1,4 +1,3 @@
-cmake_minimum_required(VERSION 3.5)
 project(Puffinn CXX C)
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
@@ -38,6 +37,11 @@ endif()
 add_executable(SampleJaccard "join-experiments/SampleJaccard.cpp")
 if (OpenMP_FOUND)
     target_link_libraries(SampleJaccard ${OpenMP_CXX_LIBRARIES} HighFive)
+endif()
+
+add_executable(SampleCosine "join-experiments/SampleCosine.cpp")
+if (OpenMP_FOUND)
+    target_link_libraries(SampleCosine ${OpenMP_CXX_LIBRARIES} HighFive)
 endif()
 
 add_executable(XiaoEtAl "join-experiments/XiaoEtAl.cpp")
