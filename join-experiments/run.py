@@ -1389,8 +1389,8 @@ DATASETS = {
     'movielens-10M': lambda: movielens10m(os.path.join(DATASET_DIR, "movielens-10M.hdf5")),
     'movielens-20M': lambda: movielens20m(os.path.join(DATASET_DIR, "movielens-20M.hdf5")),
 }
-DATASETS['glove-200-sample-10k'] = lambda : uniform_sample_dataset(DATASETS['glove-200'](), 10000)
 DATASETS['glove-200-sample-100k'] = lambda : uniform_sample_dataset(DATASETS['glove-200'](), 100000)
+DATASETS['DeepImage-sample-100k'] = lambda : uniform_sample_dataset(DATASETS['DeepImage'](), 100000)
 
 def load_dataset(name):
     file = h5py.File(DATASETS[name]())
