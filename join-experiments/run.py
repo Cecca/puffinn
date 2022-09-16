@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env pythonu
 
 # This script handles the execution of the join experiments
 # in two different modes:
@@ -891,7 +891,10 @@ def write_dense(out_fn, vecs):
     hfile.close()
 
 def stream_sparse(in_fn):
-    file = h5py.File(in_fn)
+    if isinstance(str, in_fn):
+        file = h5py.File(in_fn)
+    else:
+        file = in_fn
     data = np.array(file['train'])
     sizes = np.array(file['size_train'])
     offsets = np.zeros(sizes.shape, dtype=np.int64)
@@ -1331,6 +1334,38 @@ def dblp(out_fn):
     return out_fn
 
 
+def uniform_sample_dataset(fname, sample_size):
+    out_fname = fname.replace(".hdf5", "-sample-{}.hdf5".format(sample_size))
+    if not os.path.exists(out_fname):
+        with h5py.File(fname) as hfp:
+            dist = hfp.attrs['distance']
+            if dist == "jaccard":
+                vecs = list(stream_sparse(hfp))
+                n = len(vecs)
+            else:
+                vecs = hfp['train'][:].astype(np.float32)
+                n = vecs.shape[0]
+
+        print("Sampling the dataset")
+        np.random.seed(1234)
+        indices = np.random.randint(n, size=sample_size)
+        sampled = vecs[indices]
+
+        if dist == "jaccard":
+            write_sparse(out_fname, sampled)
+        else:
+            sampled = sklearn.preprocessing.normalize(sampled, axis=1, norm='l2')
+            write_dense(out_fname, sampled)
+            print("Computing baseline")
+            distances, neighbors, avg_distance = compute_distances(1000, sampled, dist)
+            with h5py.File(out_fname, "r+") as hfp:
+                dist_key, nn_key = '/top-1000-dists', '/top-1000-neighbors'
+                hfp[dist_key] = distances
+                hfp[nn_key] = neighbors
+                hfp['/average_distance'] = avg_distance
+
+    return out_fname
+
 # =============================================================================
 # Putting it all together
 # =======================
@@ -1354,6 +1389,8 @@ DATASETS = {
     'movielens-10M': lambda: movielens10m(os.path.join(DATASET_DIR, "movielens-10M.hdf5")),
     'movielens-20M': lambda: movielens20m(os.path.join(DATASET_DIR, "movielens-20M.hdf5")),
 }
+DATASETS['glove-200-sample-10k'] = lambda : uniform_sample_dataset(DATASETS['glove-200'](), 10000)
+DATASETS['glove-200-sample-100k'] = lambda : uniform_sample_dataset(DATASETS['glove-200'](), 100000)
 
 def load_dataset(name):
     file = h5py.File(DATASETS[name]())
@@ -1660,7 +1697,7 @@ if __name__ == "__main__":
 
     threads = 56
 
-    for dataset in ['glove-200', 'DeepImage', 'DBLP', 'Orkut']:
+    for dataset in ['DeepImage']: #['glove-200', 'DeepImage', 'DBLP', 'Orkut']:
         pass
         # ----------------------------------------------------------------------
         # Xiao et al. global top-k
@@ -1681,7 +1718,7 @@ if __name__ == "__main__":
         # PUFFINN global top-k
         for hash_source in ['Independent']:
             space_usage = {
-                'DeepImage': [4096, 8192, 16384, 32768, 65536],
+                'DeepImage': [4096],# 8192, 16384, 32768, 65536],
                 'AOL': [512, 1024, 2048, 4096],
                 'glove-200': [1024, 2048, 4096, 8192, 16384],
                 'Orkut': [2048, 4096, 8192, 16384, 32768],
