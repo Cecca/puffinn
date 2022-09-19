@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env pythonu
 
 # This script handles the execution of the join experiments
 # in two different modes:
@@ -107,12 +107,12 @@ MIGRATIONS = [
     """
     CREATE TABLE dimensionality (
         dataset TEXT,
-        k       INT, 
-        lid_mean REAL, 
-        lid_median REAL, 
-        lid_min    REAL, 
-        lid_max    REAL, 
-        lid_25     REAL, 
+        k       INT,
+        lid_mean REAL,
+        lid_median REAL,
+        lid_min    REAL,
+        lid_max    REAL,
+        lid_25     REAL,
         lid_75     REAL
     );
     """
@@ -295,13 +295,13 @@ def compute_recalls(db):
             baseline_pairs = set([(min(pair[0], pair[1]), max(pair[0], pair[1])) for pair in hfp[top_pairs_key][:k, 1:3].astype(np.int32)])
             top = hfp[top_pairs_key][:]
             kth_sim = top[k-1, 0]
-            # Select all the pairs with similarity larger then or equal 
+            # Select all the pairs with similarity larger then or equal
             # to the k-th
             baseline_pairs = set([
-                (min(pair[0], pair[1]), max(pair[0], pair[1])) 
+                (min(pair[0], pair[1]), max(pair[0], pair[1]))
                 for pair in top[top[:,0] >= kth_sim][:,1:].astype(np.int32)
             ])
-            
+
 
         print("Computing recalls for {} {} on {} with k={}".format(algorithm, params, dataset, k))
         print(baseline_pairs)
@@ -891,7 +891,10 @@ def write_dense(out_fn, vecs):
     hfile.close()
 
 def stream_sparse(in_fn):
-    file = h5py.File(in_fn)
+    if isinstance(str, in_fn):
+        file = h5py.File(in_fn)
+    else:
+        file = in_fn
     data = np.array(file['train'])
     sizes = np.array(file['size_train'])
     offsets = np.zeros(sizes.shape, dtype=np.int64)
@@ -931,7 +934,7 @@ def random_float(out_fn, n_dims, n_samples, centers):
 def random_difficult(out_fn, n, d, k):
     if os.path.isfile(out_fn):
         return out_fn
-    
+
     assert d % 3 == 0
     assert n % (k + 1) == 0
 
@@ -1331,6 +1334,38 @@ def dblp(out_fn):
     return out_fn
 
 
+def uniform_sample_dataset(fname, sample_size):
+    out_fname = fname.replace(".hdf5", "-sample-{}.hdf5".format(sample_size))
+    if not os.path.exists(out_fname):
+        with h5py.File(fname) as hfp:
+            dist = hfp.attrs['distance']
+            if dist == "jaccard":
+                vecs = list(stream_sparse(hfp))
+                n = len(vecs)
+            else:
+                vecs = hfp['train'][:].astype(np.float32)
+                n = vecs.shape[0]
+
+        print("Sampling the dataset")
+        np.random.seed(1234)
+        indices = np.random.randint(n, size=sample_size)
+        sampled = vecs[indices]
+
+        if dist == "jaccard":
+            write_sparse(out_fname, sampled)
+        else:
+            sampled = sklearn.preprocessing.normalize(sampled, axis=1, norm='l2')
+            write_dense(out_fname, sampled)
+            print("Computing baseline")
+            distances, neighbors, avg_distance = compute_distances(1000, sampled, dist)
+            with h5py.File(out_fname, "r+") as hfp:
+                dist_key, nn_key = '/top-1000-dists', '/top-1000-neighbors'
+                hfp[dist_key] = distances
+                hfp[nn_key] = neighbors
+                hfp['/average_distance'] = avg_distance
+
+    return out_fname
+
 # =============================================================================
 # Putting it all together
 # =======================
@@ -1354,6 +1389,8 @@ DATASETS = {
     'movielens-10M': lambda: movielens10m(os.path.join(DATASET_DIR, "movielens-10M.hdf5")),
     'movielens-20M': lambda: movielens20m(os.path.join(DATASET_DIR, "movielens-20M.hdf5")),
 }
+DATASETS['glove-200-sample-100k'] = lambda : uniform_sample_dataset(DATASETS['glove-200'](), 100000)
+DATASETS['DeepImage-sample-100k'] = lambda : uniform_sample_dataset(DATASETS['DeepImage'](), 100000)
 
 def load_dataset(name):
     file = h5py.File(DATASETS[name]())
@@ -1478,8 +1515,8 @@ def run_config(configuration, debug=False):
 
 def run_multiple(index_configuration, join_configurations, debug=False):
     """
-    Instantiates an index with the given configuration, and run multiple joins, with different 
-    parameterizations (as described in `join_configurations`) on the same index. 
+    Instantiates an index with the given configuration, and run multiple joins, with different
+    parameterizations (as described in `join_configurations`) on the same index.
     This allows to save the time of the indexing over multiple runs.
     """
     def merge_config(index_configuration, join_configuration):
@@ -1532,7 +1569,7 @@ def run_multiple(index_configuration, join_configurations, debug=False):
         # full_config['k'] = full_config['params']['k']
         # del full_config['params']['k']
         # print("running with join configuration", json.dumps(full_config['params'], sort_keys=True))
-        
+
         if already_run(db, full_config):
             print("Configuration already run, skipping")
             continue # skip this configuration
@@ -1556,7 +1593,7 @@ def run_multiple(index_configuration, join_configurations, debug=False):
         algo.run(join_configuration)
         algo.save_result(output, hdf5_path)
 
-        time_index, time_workload = algo.times() 
+        time_index, time_workload = algo.times()
 
         print("   time to index", time_index)
         print("   time for join", time_workload)
@@ -1618,21 +1655,21 @@ def insert_sizes():
 if __name__ == "__main__":
     if not os.path.isdir(BASE_DIR):
         os.mkdir(BASE_DIR)
-    
+
     # for dummy_just_for_scoping in [0]:
     #     index_params = {
     #         'dataset': 'glove-200',
     #         'workload': 'local-top-k',
     #         'algorithm': 'BruteForceLocal',
     #         'params': {'prefix': 10000}
-    #     } 
+    #     }
     #     query_params = [
     #         {'k': k}
     #         for k in [1000]
     #     ]
 
     #     run_multiple(index_params, query_params)
-    
+
     # with get_db() as db:
     #     compute_recalls(db)
 
@@ -1661,23 +1698,25 @@ if __name__ == "__main__":
 
     threads = 56
 
-    for dataset in ['glove-200-100k']:
+    for dataset in ['glove-200-sample-100k', 'DeepImage-sample-100k' ]:
         index_params = {
             'dataset': dataset,
             'workload': 'local-top-k',
             'algorithm': 'PMLSH',
             'params': {}
-        } 
+        }
         query_params = [
-            {'k': k, 'radius': radius}
+            {'k': k, 'radius': radius, 'alpha1': alpha1, 'T': T}
             for k in [10]
-            for radius in [0.25, 0.5, 1.0, 2.0]
+            for radius in [0.25, 0.5, 1.0]
+            for alpha1 in [0.01, 0.1, 0.3]
+            for T in [0.1, 0.2]
         ]
         run_multiple(index_params, query_params)
 
 
     for dataset in ['glove-200', 'DeepImage', 'DBLP', 'Orkut']:
-        continue 
+        continue
         # ----------------------------------------------------------------------
         # Xiao et al. global top-k
         # if dataset in ['AOL', 'DBLP', "Orkut", "movielens-20M"]:
@@ -1686,7 +1725,7 @@ if __name__ == "__main__":
         #         'workload': 'global-top-k',
         #         'algorithm': 'XiaoEtAl',
         #         'params': {}
-        #     } 
+        #     }
         #     query_params = [
         #         {'k': k}
         #         for k in [1, 10, 100]
@@ -1697,7 +1736,7 @@ if __name__ == "__main__":
         # PUFFINN global top-k
         for hash_source in ['Independent']:
             space_usage = {
-                'DeepImage': [4096, 8192, 16384, 32768, 65536],
+                'DeepImage': [4096],# 8192, 16384, 32768, 65536],
                 'AOL': [512, 1024, 2048, 4096],
                 'glove-200': [1024, 2048, 4096, 8192, 16384],
                 'Orkut': [2048, 4096, 8192, 16384, 32768],
@@ -1742,7 +1781,7 @@ if __name__ == "__main__":
         #         run_multiple(index_params, join_params)
 
     for dataset in ['glove-200', 'DeepImage']:
-        continue 
+        continue
         # ----------------------------------------------------------------------
         # pynndescent
         # for n_neighbors in [20, 30, 50, 100]:
@@ -1766,7 +1805,7 @@ if __name__ == "__main__":
         #                         'algorithm': 'pynndescent',
         #                         'threads': threads,
         #                         'params': index_params
-        #                     }, 
+        #                     },
         #                     join_params
         #                 )
 
@@ -1792,7 +1831,7 @@ if __name__ == "__main__":
         #                     'algorithm': 'faiss-HNSW',
         #                     'threads': threads,
         #                     'params': index_params
-        #                 }, 
+        #                 },
         #                 join_params
         #             )
 

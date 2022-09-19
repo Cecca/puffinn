@@ -42,6 +42,11 @@ run:
 lid dataset:
   env TOPK_DIR=/mnt/large_storage/topk-join/ python3 join-experiments/lid.py {{dataset}}
 
+# Compute the relative contrast of pairs
+rc dataset:
+  env TOPK_DIR=/mnt/large_storage/topk-join/ python3 join-experiments/rc.py {{dataset}}
+
+
 plot:
   env TOPK_DIR=/mnt/large_storage/topk-join/ python3 join-experiments/plot.py
 
