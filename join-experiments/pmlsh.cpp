@@ -157,6 +157,11 @@ int main(void) {
           }
           if (key == "k") {
               workload_params_stream >> Config::KNN;
+          } else if (key == "T") { 
+              workload_params_stream >> Config::T;
+          } else if (key == "alpha1") { 
+              workload_params_stream >> Config::alpha1;
+	          Config::t = MyFunc::Ccal_thresh(Config::lowDim, Config::alpha1);
           } else if (key == "radius") { 
               workload_params_stream >> Config::search_Radius;
           } else {
