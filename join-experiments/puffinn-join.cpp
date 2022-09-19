@@ -179,6 +179,10 @@ void run() {
         }
     }
 
+    if (threads > 0) {
+        omp_set_num_threads(threads);
+    }
+
     if (hash_source == "Independent") {
         run_index<Similarity, puffinn::IndependentHashArgs<HashFn>, HashFn, RawData>(
             dataset, dimensions, space_usage, with_sketches, deduplicate
