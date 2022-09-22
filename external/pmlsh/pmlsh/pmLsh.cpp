@@ -3,7 +3,6 @@
 #include <ctime>
 #include <queue>
 
-
 void pmLsh::improvedSearchWithKth(DataMetric& highData, DataMetric& highQueryData, DataMetric& lowQueryData, Real_Result& real_result)
 {
 	/*����*/
@@ -13,6 +12,9 @@ void pmLsh::improvedSearchWithKth(DataMetric& highData, DataMetric& highQueryDat
 
 	progress_display pd(lowQueryData.size());
 	for (int i = 0; i < lowQueryData.size(); ++i) {
+		if ((i + 1) % 100 == 0) { 
+			cerr << i << "/" << lowQueryData.size() << endl;
+		}
 		DATATYPE cost = 0;
 		std::priority_queue<knnPair> cand;
 		vector<bool> visitFlag(highData.size(), false);
