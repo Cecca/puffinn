@@ -1698,7 +1698,7 @@ if __name__ == "__main__":
 
     threads = 56
 
-    for dataset in ['glove-200-sample-100k', 'DeepImage-sample-100k' ]:
+    for dataset in ['DeepImage-sample-100k' ]:
         index_params = {
             'dataset': dataset,
             'workload': 'local-top-k',
@@ -1706,11 +1706,13 @@ if __name__ == "__main__":
             'params': {}
         }
         query_params = [
-            {'k': k, 'radius': radius, 'alpha1': alpha1, 'T': T}
+            {'k': k, 'radius': radius, 'alpha1': alpha1, 
+             'T': T, 'approx': approx}
             for k in [10]
-            for radius in [0.25, 0.5, 1.0]
-            for alpha1 in [0.01, 0.1, 0.3]
-            for T in [0.1, 0.2]
+            for radius in [1.0]
+            for alpha1 in [0.001]
+            for T in [0.2, 0.3, 0.4]
+            for approx in [1.1, 1.25]
         ]
         run_multiple(index_params, query_params)
 
