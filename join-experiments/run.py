@@ -25,8 +25,8 @@ import shlex
 import os
 import hashlib
 import sqlite3
-import faiss
-import falconn
+#import faiss
+#import falconn
 import json
 import random
 import numba
@@ -107,12 +107,12 @@ MIGRATIONS = [
     """
     CREATE TABLE dimensionality (
         dataset TEXT,
-        k       INT, 
-        lid_mean REAL, 
-        lid_median REAL, 
-        lid_min    REAL, 
-        lid_max    REAL, 
-        lid_25     REAL, 
+        k       INT,
+        lid_mean REAL,
+        lid_median REAL,
+        lid_min    REAL,
+        lid_max    REAL,
+        lid_25     REAL,
         lid_75     REAL
     );
     """
@@ -295,13 +295,13 @@ def compute_recalls(db):
             baseline_pairs = set([(min(pair[0], pair[1]), max(pair[0], pair[1])) for pair in hfp[top_pairs_key][:k, 1:3].astype(np.int32)])
             top = hfp[top_pairs_key][:]
             kth_sim = top[k-1, 0]
-            # Select all the pairs with similarity larger then or equal 
+            # Select all the pairs with similarity larger then or equal
             # to the k-th
             baseline_pairs = set([
-                (min(pair[0], pair[1]), max(pair[0], pair[1])) 
+                (min(pair[0], pair[1]), max(pair[0], pair[1]))
                 for pair in top[top[:,0] >= kth_sim][:,1:].astype(np.int32)
             ])
-            
+
 
         print("Computing recalls for {} {} on {} with k={}".format(algorithm, params, dataset, k))
         print(baseline_pairs)
@@ -934,7 +934,7 @@ def random_float(out_fn, n_dims, n_samples, centers):
 def random_difficult(out_fn, n, d, k):
     if os.path.isfile(out_fn):
         return out_fn
-    
+
     assert d % 3 == 0
     assert n % (k + 1) == 0
 
@@ -1406,9 +1406,10 @@ ALGORITHMS = {
     'faiss-IVF':       lambda: (FaissIVF(),                                 1),
     'pynndescent':     lambda: (PyNNDescent(),                              1),
     'falconn':         lambda: (FALCONN(),                                  2),
+    'PMLSH':           lambda: (SubprocessAlgorithm(["bin/PMLSH"]),       1),
     # Global top-k baselines
     'XiaoEtAl':        lambda: (SubprocessAlgorithm(["build/XiaoEtAl"]),    1),
-    'LSBTree':         lambda: (SubprocessAlgorithm(["build/LSBTree"]),     1)
+    'LSBTree':         lambda: (SubprocessAlgorithm(["build/LSBTree"]),     1),
 }
 
 # =============================================================================
@@ -1514,8 +1515,8 @@ def run_config(configuration, debug=False):
 
 def run_multiple(index_configuration, join_configurations, debug=False):
     """
-    Instantiates an index with the given configuration, and run multiple joins, with different 
-    parameterizations (as described in `join_configurations`) on the same index. 
+    Instantiates an index with the given configuration, and run multiple joins, with different
+    parameterizations (as described in `join_configurations`) on the same index.
     This allows to save the time of the indexing over multiple runs.
     """
     def merge_config(index_configuration, join_configuration):
@@ -1568,7 +1569,7 @@ def run_multiple(index_configuration, join_configurations, debug=False):
         # full_config['k'] = full_config['params']['k']
         # del full_config['params']['k']
         # print("running with join configuration", json.dumps(full_config['params'], sort_keys=True))
-        
+
         if already_run(db, full_config):
             print("Configuration already run, skipping")
             continue # skip this configuration
@@ -1592,7 +1593,7 @@ def run_multiple(index_configuration, join_configurations, debug=False):
         algo.run(join_configuration)
         algo.save_result(output, hdf5_path)
 
-        time_index, time_workload = algo.times() 
+        time_index, time_workload = algo.times()
 
         print("   time to index", time_index)
         print("   time for join", time_workload)
@@ -1654,21 +1655,21 @@ def insert_sizes():
 if __name__ == "__main__":
     if not os.path.isdir(BASE_DIR):
         os.mkdir(BASE_DIR)
-    
-    for dummy_just_for_scoping in [0]:
-        index_params = {
-            'dataset': 'glove-200',
-            'workload': 'local-top-k',
-            'algorithm': 'BruteForceLocal',
-            'params': {'prefix': 10000}
-        } 
-        query_params = [
-            {'k': k}
-            for k in [1000]
-        ]
 
-        run_multiple(index_params, query_params)
-    
+    # for dummy_just_for_scoping in [0]:
+    #     index_params = {
+    #         'dataset': 'glove-200',
+    #         'workload': 'local-top-k',
+    #         'algorithm': 'BruteForceLocal',
+    #         'params': {'prefix': 10000}
+    #     }
+    #     query_params = [
+    #         {'k': k}
+    #         for k in [1000]
+    #     ]
+
+    #     run_multiple(index_params, query_params)
+
     # with get_db() as db:
     #     compute_recalls(db)
 
@@ -1697,8 +1698,27 @@ if __name__ == "__main__":
 
     threads = 56
 
-    for dataset in ['DeepImage']: #['glove-200', 'DeepImage', 'DBLP', 'Orkut']:
-        pass
+    for dataset in ['DeepImage-sample-100k' ]:
+        index_params = {
+            'dataset': dataset,
+            'workload': 'local-top-k',
+            'algorithm': 'PMLSH',
+            'params': {}
+        }
+        query_params = [
+            {'k': k, 'radius': radius, 'alpha1': alpha1, 
+             'T': T, 'approx': approx}
+            for k in [10]
+            for radius in [1.0]
+            for alpha1 in [0.001]
+            for T in [0.2, 0.3, 0.4]
+            for approx in [1.1, 1.25]
+        ]
+        run_multiple(index_params, query_params)
+
+
+    for dataset in ['glove-200', 'DeepImage', 'DBLP', 'Orkut']:
+        continue
         # ----------------------------------------------------------------------
         # Xiao et al. global top-k
         # if dataset in ['AOL', 'DBLP', "Orkut", "movielens-20M"]:
@@ -1707,7 +1727,7 @@ if __name__ == "__main__":
         #         'workload': 'global-top-k',
         #         'algorithm': 'XiaoEtAl',
         #         'params': {}
-        #     } 
+        #     }
         #     query_params = [
         #         {'k': k}
         #         for k in [1, 10, 100]
@@ -1763,7 +1783,7 @@ if __name__ == "__main__":
         #         run_multiple(index_params, join_params)
 
     for dataset in ['glove-200', 'DeepImage']:
-        pass
+        continue
         # ----------------------------------------------------------------------
         # pynndescent
         # for n_neighbors in [20, 30, 50, 100]:
@@ -1787,7 +1807,7 @@ if __name__ == "__main__":
         #                         'algorithm': 'pynndescent',
         #                         'threads': threads,
         #                         'params': index_params
-        #                     }, 
+        #                     },
         #                     join_params
         #                 )
 
@@ -1813,7 +1833,7 @@ if __name__ == "__main__":
         #                     'algorithm': 'faiss-HNSW',
         #                     'threads': threads,
         #                     'params': index_params
-        #                 }, 
+        #                 },
         #                 join_params
         #             )
 
@@ -1918,6 +1938,6 @@ if __name__ == "__main__":
 
 
 
-    # with get_db() as db:
-    #     compute_recalls(db)
+    with get_db() as db:
+        compute_recalls(db)
 
