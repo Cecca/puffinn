@@ -355,6 +355,7 @@ int main(void) {
     size_t m = 16;
     double w = 4.0;
     size_t seed = 1234;
+    int threads = -1;
     while (true) {
         std::string key;
         index_params_stream >> key;
@@ -366,11 +367,16 @@ int main(void) {
             index_params_stream >> m;
         } else if (key == "w") {
             index_params_stream >> w;
+        } else if (key == "threads") {
+            index_params_stream >> threads;
         } else if (key == "seed") {
             index_params_stream >> seed;
         } else {
           // ignore other parameters
         }
+    }
+    if (threads > 0) {
+        omp_set_num_threads(threads);
     }
 
     auto index_pair = build_index(dataset, m, w, seed);
