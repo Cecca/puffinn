@@ -581,7 +581,7 @@ class SubprocessAlgorithm(Algorithm):
         self._send("data")
         self._send(distance)
         program = self._subprocess_handle()
-        self._send("path " + h5py_path)
+        self._send("path " + h5py_path)run
         self._expect("ok", "population phase failed")
 
     def index(self, params):
