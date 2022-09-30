@@ -120,11 +120,11 @@ namespace puffinn {
     };
 
     class MinHashFunction {
-        MultiplyAddHash hash;
+        TabulationHash hash;
         BitPermutation permutation;
 
     public:
-        MinHashFunction(MultiplyAddHash hash, BitPermutation perm) : hash(hash), permutation(perm) {
+        MinHashFunction(TabulationHash hash, BitPermutation perm) : hash(hash), permutation(perm) {
         }
 
         MinHashFunction(std::istream& in)
@@ -148,7 +148,7 @@ namespace puffinn {
                     min_token = i;
                 }
             }
-            return permutation(min_token);
+            return permutation(min_hash);
         }
     };
 
@@ -228,7 +228,7 @@ namespace puffinn {
             rng.seed(get_default_random_generator()());
 
             BitPermutation perm(rng, set_size, args.randomized_bits);
-            return Function(MultiplyAddHash(rng), perm);
+            return Function(TabulationHash(rng), perm);
         }
 
         unsigned int bits_per_function() const {

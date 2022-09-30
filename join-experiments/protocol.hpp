@@ -39,7 +39,7 @@ float norm(std::vector<float> & v) {
     for (auto x : v) {
         n += x * x;
     }
-    return n;
+    return std::sqrt(n);
 }
 
 std::vector<std::vector<float>> read_float_vectors_hdf5(bool normalize) {

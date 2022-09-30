@@ -4,9 +4,8 @@ build:
   cmake --build build --config Debug --target PuffinnJoin
 
 check:
-  #!/bin/bash
   cmake --build build --config RelWithDebInfo --target PuffinnJoin
-  env OMP_NUM_THREADS=2 time build/PuffinnJoin < instructions.txt > result.dsv
+  env OMP_NUM_THREADS=56 build/PuffinnJoin < instructions.txt > result.dsv
 
 cache-misses exe:
   perf record --call-graph dwarf -e cache-misses -p $(pgrep {{exe}})
@@ -42,6 +41,11 @@ run:
 
 lid dataset:
   env TOPK_DIR=/mnt/large_storage/topk-join/ python3 join-experiments/lid.py {{dataset}}
+
+# Compute the relative contrast of pairs
+rc dataset:
+  env TOPK_DIR=/mnt/large_storage/topk-join/ python3 join-experiments/rc.py {{dataset}}
+
 
 plot:
   env TOPK_DIR=/mnt/large_storage/topk-join/ python3 join-experiments/plot.py
