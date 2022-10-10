@@ -1,8 +1,72 @@
 ---
 title: "PUFFINN-join results"
+execute:
+  echo: false
 ---
 
 This website hosts interactive plots of the results of the experiments.
 
-**Under construction**
+```{r include=FALSE}
+library(tidyverse)
+library(ggiraph)
+library(rPref)
+conn <- DBI::dbConnect(RSQLite::SQLite(), "join-results.db")
+```
+
+
+# Local top-$k$
+
+Hover with the mouse on top of each data point to get the corresponding configuration.
+
+```{r warning=FALSE}
+df <- tbl(conn, sql("
+    SELECT 
+        params,
+        CASE
+            WHEN dataset = 'glove-200' THEN 'Glove'
+            ELSE dataset
+        END as dataset,
+        k,
+        CASE 
+            WHEN json_extract(params, '$.method') == 'LSHJoin' THEN 'PUFFINN-join'
+            WHEN json_extract(params, '$.method') == 'LSH' THEN 'PUFFINN-query'
+            ELSE algorithm
+        END as algorithm,
+        recall,
+        1000.0 * (time_index_s + time_join_s) / size as normalized_time_ms,
+        (time_index_s + time_join_s) as total_time_s,
+        time_index_s,
+        time_join_s
+    FROM recent NATURAL JOIN dataset_size
+    WHERE workload = 'local-top-k'
+      AND algorithm != 'faiss-IVF'
+      AND recent.dataset in ('glove-200', 'DeepImage')
+      AND threads = 56
+      AND k = 10
+    ")) %>% collect()
+
+frontier <- df %>%
+    group_by(dataset, algorithm) %>%
+    psel(high(recall) * low(normalized_time_ms))
+
+ggobj <- ggplot(df, aes(x = recall, 
+                        y = normalized_time_ms, 
+                        color = algorithm, 
+                        tooltip = str_c(
+                            "algorithm", algorithm, "\n",
+                            "normalized time (ms): ", normalized_time_ms, "\n",
+                            "total time (s): ", total_time_s, "\n",
+                            "index time (s): ", time_index_s, "\n",
+                            "join time (s): ", time_join_s, "\n",
+                            "recall: ", recall, "\n",
+                            "params: ", params
+                        ),
+                        shape = algorithm)) +
+    geom_point_interactive(alpha=0.7) +
+    geom_point_interactive(data=frontier) +
+    geom_line(data=frontier) +
+    facet_wrap(vars(dataset), ncol=1) +
+    theme_classic()
+girafe(ggobj = ggobj)
+```
 
