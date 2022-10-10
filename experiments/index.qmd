@@ -46,27 +46,40 @@ df <- tbl(conn, sql("
     ")) %>% collect()
 
 frontier <- df %>%
+    select(dataset, algorithm, recall, normalized_time_ms) %>%
     group_by(dataset, algorithm) %>%
     psel(high(recall) * low(normalized_time_ms))
 
 ggobj <- ggplot(df, aes(x = recall, 
                         y = normalized_time_ms, 
-                        color = algorithm, 
-                        tooltip = str_c(
-                            "algorithm", algorithm, "\n",
-                            "normalized time (ms): ", normalized_time_ms, "\n",
-                            "total time (s): ", total_time_s, "\n",
-                            "index time (s): ", time_index_s, "\n",
-                            "join time (s): ", time_join_s, "\n",
-                            "recall: ", recall, "\n",
-                            "params: ", params
-                        ),
-                        shape = algorithm)) +
-    geom_point_interactive(alpha=0.7) +
-    geom_point_interactive(data=frontier) +
+                        color = algorithm
+                        )) +
+    geom_point_interactive(
+        aes(
+            tooltip = str_c(
+                "algorithm", algorithm, "\n",
+                "normalized time (points/ms): ", normalized_time_ms, "\n",
+                "total time (s): ", total_time_s, "\n",
+                "index time (s): ", time_index_s, "\n",
+                "join time (s): ", time_join_s, "\n",
+                "recall: ", recall, "\n",
+                "params: ", params
+            )
+        ),
+        alpha=0.7
+    ) +
+    #geom_point_interactive(data=frontier) +
     geom_line(data=frontier) +
+    scale_y_log10() +
+    labs(
+        x = "recall",
+        y = "normalized time (points/ms)"
+    ) +
     facet_wrap(vars(dataset), ncol=1) +
-    theme_classic()
+    theme_classic() +
+    theme(
+        legend.position = "top"
+    )
 girafe(ggobj = ggobj)
 ```
 
