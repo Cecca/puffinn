@@ -230,6 +230,36 @@ def plot_distance_histogram(path, k):
     print("saving to", outfile)
     plt.savefig(outfile)
 
+def plot_distance_histograms(names, k):
+    plotdir = os.path.join(BASE_DIR, "plots")
+    if not os.path.isdir(plotdir):
+        os.mkdir(plotdir)
+    alldata = []
+    for name in names:
+        path = run.DATASETS[name]()
+        f = h5py.File(path)
+        dists = f['top-1000-dists'][:,k-1]
+        kth_dist = pd.DataFrame({'similarity': dists})
+        kth_dist['dataset'] = name if name != 'glove-200' else 'Glove'
+        alldata.append(kth_dist)
+    data = pd.concat(alldata, ignore_index=True)
+    print('plotting data with shape', data.shape)
+    print(data['dataset'].unique())
+    sns.displot(
+        data = data,
+        x    = 'similarity',
+        kind = 'kde',
+        bw_method = 0.2,
+        cut = 0,
+        fill =- True,
+        col  = 'dataset',
+        height = 2.5,
+        aspect = 1,
+        facet_kws = dict(sharey = False)
+    )
+    outfile = os.path.join(plotdir, "distances-at-k{}.png".format(k))
+    print("saving to", outfile)
+    plt.savefig(outfile, dpi=300)
 
 def plot_param_dep():
     plotdir = os.path.join(BASE_DIR, "plots")
@@ -270,9 +300,11 @@ def plot_param_dep():
 if __name__ == "__main__":
     if len(sys.argv) == 2:
         import run
-        dataset_path = run.DATASETS[sys.argv[1]]()
-        for k in [1, 10, 100, 1000]:
-            plot_distance_histogram(dataset_path, k)
+        names = sys.argv[1].split(",")
+        plot_distance_histograms(names, 10)
+        # dataset_path = run.DATASETS[sys.argv[1]]()
+        # for k in [1, 10, 100, 1000]:
+        #     plot_distance_histogram(dataset_path, k)
     else:
         plot_param_dep()
         # plot_topk("global")
