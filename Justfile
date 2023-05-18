@@ -3,6 +3,9 @@ set dotenv-load
 build:
   cmake --build build --config Debug --target PuffinnJoin
 
+build-lsbtree:
+  cmake --build build --config Debug --target LSBTree
+
 check:
   cmake --build build --config RelWithDebInfo --target PuffinnJoin
   env OMP_NUM_THREADS=56 build/PuffinnJoin < instructions.txt > result.dsv
