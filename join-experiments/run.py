@@ -1409,7 +1409,7 @@ ALGORITHMS = {
     'PMLSH':           lambda: (SubprocessAlgorithm(["bin/PMLSH"]),       1),
     # Global top-k baselines
     'XiaoEtAl':        lambda: (SubprocessAlgorithm(["build/XiaoEtAl"]),    1),
-    'LSBTree':         lambda: (SubprocessAlgorithm(["build/LSBTree"]),     1),
+    'LSBTree':         lambda: (SubprocessAlgorithm(["build/LSBTree"]),     2),
 }
 
 # =============================================================================
