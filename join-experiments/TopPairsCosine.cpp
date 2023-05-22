@@ -1,9 +1,3 @@
-// Implements Algorithm CP3 of the paper
-//   Efficient and Accurate Nearest Neighbor and Closest Pair Search in High-Dimensional Space
-//   Yufei Tao, Ke Yi, Cheng Sheng, Panos Kalnis
-//   Transactions on Database Systems
-//   https://dl.acm.org/doi/pdf/10.1145/1806907.1806912
-
 #include <cstdlib>
 #include <fstream>
 #include <random>
@@ -19,18 +13,28 @@
 #include "puffinn.hpp"
 #include "puffinn/performance.hpp"
 
+const unsigned long long MB = 1024*1024;
+const unsigned long long KB = 1024;
+
 class Progress {
   std::string prefix;
+  std::chrono::time_point<std::chrono::system_clock> start;
   uint64_t every;
   uint64_t last_log;
   uint64_t count;
+  uint64_t expected;
 
   void log() const {
-    std::cerr << prefix << count << std::endl;
+    auto cur = std::chrono::system_clock::now();
+    double elapsed = std::chrono::duration_cast<std::chrono::seconds>(cur - start).count();
+    double rate = count / elapsed;
+    uint64_t todo = expected - count;
+    double estimate = todo / rate;
+    std::cerr << prefix << count << " elapsed " << elapsed << " :: " << estimate << " to go" << std::endl;
   }
 
 public:
-  Progress(std::string prefix, uint64_t every): prefix(prefix), every(every), last_log(0), count(0) {}
+  Progress(std::string prefix, uint64_t every, uint64_t expected): prefix(prefix), start(std::chrono::system_clock::now()), every(every), last_log(0), count(0), expected(expected) {}
 
   void update(uint64_t x) {
     #pragma omp atomic
@@ -100,6 +104,7 @@ int main(int argc, char** argv) {
         std::cerr << "USAGE: TopPairsCosine [-k K] <dataset>" << std::endl;
         return 1;
     }
+    bool exact = false;
 
     std::cerr << "loading data from " << path << std::endl;
     H5Easy::File file(path, H5Easy::File::ReadWrite);
@@ -116,43 +121,62 @@ int main(int argc, char** argv) {
               << " vectors from hdf5 file, of dimension "
               << dim << std::endl;
 
-    std::vector<std::vector<Pair>> threads_res(omp_get_max_threads());
+    std::vector<std::vector<uint32_t>> out_res;
 
-    Progress prog("point ", 10000);
-    #pragma omp parallel for schedule(dynamic)
-    for (size_t i=0; i<data.size(); i++) {
-        std::vector<Pair> & res = threads_res[omp_get_thread_num()];
-        for (size_t j=i+1; j<data.size(); j++) {
-            float sim = (dotp(data[i], data[j]) + 1) / 2.0;
-            if (sim > 1.0) {
-                sim = 1.0;
+    if (exact) {
+        std::vector<std::vector<Pair>> threads_res(omp_get_max_threads());
+
+        Progress prog("point ", 1000, data.size());
+        #pragma omp parallel for schedule(dynamic)
+        for (size_t i=0; i<data.size(); i++) {
+            std::vector<Pair> & res = threads_res[omp_get_thread_num()];
+            for (size_t j=i+1; j<data.size(); j++) {
+                float sim = dotp(data[i], data[j]);
+                if (sim > 1.0) {
+                    sim = 1.0;
+                }
+                res.push_back(Pair{i, j, sim});
+                std::push_heap(res.begin(), res.end(), cmp_pairs);
+                if (res.size() > k) {
+                    std::pop_heap(res.begin(), res.end(), cmp_pairs);
+                    res.pop_back();
+                }
             }
-            res.push_back(Pair{i, j, sim});
-            std::push_heap(res.begin(), res.end(), cmp_pairs);
-            if (res.size() > k) {
-                std::pop_heap(res.begin(), res.end(), cmp_pairs);
-                res.pop_back();
+            prog.update(1);
+        }
+
+        std::vector<Pair> res = threads_res[0];
+        for (size_t tid=1; tid < threads_res.size(); tid++) {
+            for (auto pair : threads_res[tid]) {
+                res.push_back(pair);
+                std::push_heap(res.begin(), res.end(), cmp_pairs);
+                if (res.size() > k) {
+                    std::pop_heap(res.begin(), res.end(), cmp_pairs);
+                    res.pop_back();
+                }
             }
         }
-        prog.update(1);
-    }
 
-    std::vector<Pair> res = threads_res[0];
-    for (size_t tid=1; tid < threads_res.size(); tid++) {
-        for (auto pair : threads_res[tid]) {
-            res.push_back(pair);
-            std::push_heap(res.begin(), res.end(), cmp_pairs);
-            if (res.size() > k) {
-                std::pop_heap(res.begin(), res.end(), cmp_pairs);
-                res.pop_back();
-            }
+        std::sort_heap(res.begin(), res.end(), cmp_pairs);
+        for (auto pair : res) {
+            out_res.push_back({pair.similarity, pair.a, pair.b});
         }
-    }
+    } else {
+        puffinn::Index<puffinn::CosineSimilarity, puffinn::SimHash> index(
+            data[0].size(),
+            4 * KB * data.size(),
+            puffinn::IndependentHashArgs<puffinn::SimHash>()
+        );
+        for (auto v : data) { index.insert(v); }
+        index.rebuild(false, false);
+        auto pairs = index.global_lsh_join(k, 0.999);
+        for (auto entry : pairs.best_indices()) {
+            std::vector<uint32_t> vpair;
+            vpair.push_back(entry.first);
+            vpair.push_back(entry.second);
+            out_res.push_back(vpair);
+        }
 
-    std::sort_heap(res.begin(), res.end(), cmp_pairs);
-    std::vector<std::vector<float>> out_res;
-    for (auto pair : res) {
-        out_res.push_back({pair.similarity, pair.a, pair.b});
     }
 
     /* for (size_t i=res.size(); i>res.size() - 10; i--) { */

@@ -25,7 +25,7 @@ import shlex
 import os
 import hashlib
 import sqlite3
-#import faiss
+import faiss
 #import falconn
 import json
 import random
@@ -192,6 +192,7 @@ def compute_distances(k, dataset, distancefn):
         norms = np.linalg.norm(dataset, axis=1)[:, np.newaxis]
         assert np.sum(norms == 0.0) == 0
         dataset /= norms
+        faiss.omp_set_num_threads(52)
         index = faiss.IndexFlatIP(dataset.shape[1])
         index.add(dataset)
         all_distances, all_neighbors = index.search(dataset, k+1)
@@ -257,9 +258,10 @@ def compute_recalls(db):
     missing_recalls = db.execute("SELECT rowid, algorithm, params, dataset, k, output_file, hdf5_group FROM main WHERE recall IS NULL AND WORKLOAD = 'global-top-k';").fetchall()
     print("There are {} missing recalls for global-top-k".format(len(missing_recalls)))
     for rowid, algorithm, params, dataset, k, output_file, hdf5_group in missing_recalls:
+        if k > 1000:
+            continue
 
-        if dataset == 'DeepImage':
-            print("TODO: Fix DeepImage")
+        if 'sample' in dataset:
             continue
 
         # Compute the top-1000 distances for the dataset, if they are not already there
@@ -268,43 +270,51 @@ def compute_recalls(db):
 
         dataset_path = DATASETS[dataset]()
         with h5py.File(dataset_path, 'r+') as hfp:
-            if dist_key not in hfp or nn_key not in hfp:
-                print('Computing top distances for', dataset)
-                distances, neighbors, avg_distance = compute_distances(1000, hfp['/train'], hfp.attrs['distance'])
-                hfp[dist_key] = distances
-                hfp[nn_key] = neighbors
-                hfp['/average_distance'] = avg_distance
             if top_pairs_key not in hfp:
-                print('Computing top 1000 pairs for', dataset)
-                distances = hfp[dist_key]
-                neighbors = hfp[nn_key]
-                topk = []
-                for i, (dists, neighs) in tqdm(enumerate(zip(distances, neighbors)), total=neighbors.shape[0]):
-                    for d, j in zip(dists, neighs):
-                        if i != j:
-                            t = (d, min(i, j), max(i, j))
-                            if len(topk) > 2000:
-                                heapq.heappushpop(topk, t)
-                            else:
-                                heapq.heappush(topk, t)
-                topk = list(set(topk)) # remove duplicates
-                topk.sort(reverse=True)
-                topk = topk[:1000]
-                hfp[top_pairs_key] = topk
+                if dist_key not in hfp or nn_key not in hfp:
+                    print('Computing top distances for', dataset)
+                    distances, neighbors, avg_distance = compute_distances(1000, hfp['/train'], hfp.attrs['distance'])
+                    hfp[dist_key] = distances
+                    hfp[nn_key] = neighbors
+                    hfp['/average_distance'] = avg_distance
 
-            baseline_pairs = set([(min(pair[0], pair[1]), max(pair[0], pair[1])) for pair in hfp[top_pairs_key][:k, 1:3].astype(np.int32)])
-            top = hfp[top_pairs_key][:]
-            kth_sim = top[k-1, 0]
-            # Select all the pairs with similarity larger then or equal
-            # to the k-th
-            baseline_pairs = set([
-                (min(pair[0], pair[1]), max(pair[0], pair[1]))
-                for pair in top[top[:,0] >= kth_sim][:,1:].astype(np.int32)
-            ])
+                    print('Computing top 1000 pairs for', dataset)
+                    distances = hfp[dist_key]
+                    neighbors = hfp[nn_key]
+                    topk = []
+                    for i, (dists, neighs) in tqdm(enumerate(zip(distances, neighbors)), total=neighbors.shape[0]):
+                        for d, j in zip(dists, neighs):
+                            if i != j:
+                                t = (d, min(i, j), max(i, j))
+                                if len(topk) > 2000:
+                                    heapq.heappushpop(topk, t)
+                                else:
+                                    heapq.heappush(topk, t)
+                    topk = list(set(topk)) # remove duplicates
+                    topk.sort(reverse=True)
+                    topk = topk[:1000]
+                    hfp[top_pairs_key] = topk
+
+            if hfp[top_pairs_key].shape[1] == 3:
+                baseline_pairs = set([(min(pair[0], pair[1]), max(pair[0], pair[1])) 
+                                         for pair in hfp[top_pairs_key][:k, 1:3].astype(np.int32)])
+                top = hfp[top_pairs_key][:]
+                kth_sim = top[k-1, 0]
+                # Select all the pairs with similarity larger then or equal
+                # to the k-th
+                baseline_pairs = set([
+                    (min(pair[0], pair[1]), max(pair[0], pair[1]))
+                    for pair in top[top[:,0] >= kth_sim][:,1:].astype(np.int32)
+                ])
+
+            else:
+                baseline_pairs = set([(min(pair[0], pair[1]), max(pair[0], pair[1])) 
+                                         for pair in hfp[top_pairs_key][:k,:].astype(np.int32)])
 
 
-        print("Computing recalls for {} {} on {} with k={}".format(algorithm, params, dataset, k))
-        print(baseline_pairs)
+
+        # print("Computing recalls for {} {} on {} with k={}".format(algorithm, params, dataset, k))
+        # print(baseline_pairs)
         output_file = os.path.join(BASE_DIR, output_file)
         with h5py.File(output_file) as hfp:
             actual_pairs = set(map(tuple, hfp[hdf5_group]['global-top-{}'.format(k)]))
@@ -581,7 +591,7 @@ class SubprocessAlgorithm(Algorithm):
         self._send("data")
         self._send(distance)
         program = self._subprocess_handle()
-        self._send("path " + h5py_path)run
+        self._send("path " + h5py_path)
         self._expect("ok", "population phase failed")
 
     def index(self, params):
@@ -1698,27 +1708,26 @@ if __name__ == "__main__":
 
     threads = 56
 
-    for dataset in ['DeepImage-sample-100k' ]:
-        index_params = {
-            'dataset': dataset,
-            'workload': 'local-top-k',
-            'algorithm': 'PMLSH',
-            'params': {}
-        }
-        query_params = [
-            {'k': k, 'radius': radius, 'alpha1': alpha1, 
-             'T': T, 'approx': approx}
-            for k in [10]
-            for radius in [1.0]
-            for alpha1 in [0.001]
-            for T in [0.2, 0.3, 0.4]
-            for approx in [1.1, 1.25]
-        ]
-        run_multiple(index_params, query_params)
+    # for dataset in ['DeepImage-sample-100k' ]:
+    #     index_params = {
+    #         'dataset': dataset,
+    #         'workload': 'local-top-k',
+    #         'algorithm': 'PMLSH',
+    #         'params': {}
+    #     }
+    #     query_params = [
+    #         {'k': k, 'radius': radius, 'alpha1': alpha1, 
+    #          'T': T, 'approx': approx}
+    #         for k in [10]
+    #         for radius in [1.0]
+    #         for alpha1 in [0.001]
+    #         for T in [0.2, 0.3, 0.4]
+    #         for approx in [1.1, 1.25]
+    #     ]
+    #     run_multiple(index_params, query_params)
 
 
-    for dataset in ['glove-200', 'DeepImage', 'DBLP', 'Orkut']:
-        continue
+    for dataset in ['glove-200']: #, 'DeepImage']:#, 'DBLP', 'Orkut']:
         # ----------------------------------------------------------------------
         # Xiao et al. global top-k
         # if dataset in ['AOL', 'DBLP', "Orkut", "movielens-20M"]:
@@ -1753,7 +1762,8 @@ if __name__ == "__main__":
                     'threads': threads,
                     'params': {
                         'space_usage': space_usage,
-                        'hash_source': hash_source
+                        'hash_source': hash_source,
+                        'with_sketches': False
                     }
                 }
                 query_params = [
@@ -1773,12 +1783,16 @@ if __name__ == "__main__":
         #             'algorithm': 'LSBTree',
         #             'params': {
         #                 'm': m,
-        #                 'w': w
+        #                 'w': w,
         #             }
         #         }
         #         join_params = [
-        #             {'k': k}
-        #             for k in [1, 10]
+        #             {
+        #                 'k': k, 
+        #                 'min_leaves': min_leaves
+        #             }
+        #             for k in [100, 1000]
+        #             for min_leaves in [0, 2, 4, 8, 16, 32]
         #         ]
         #         run_multiple(index_params, join_params)
 

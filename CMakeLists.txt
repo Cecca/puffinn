@@ -37,6 +37,11 @@ if (OpenMP_FOUND)
     target_link_libraries(StoreJaccard ${OpenMP_CXX_LIBRARIES} HighFive)
 endif()
 
+add_executable(TopPairsCosine "join-experiments/TopPairsCosine.cpp")
+if (OpenMP_FOUND)
+    target_link_libraries(TopPairsCosine ${OpenMP_CXX_LIBRARIES} HighFive)
+endif()
+
 add_executable(SampleJaccard "join-experiments/SampleJaccard.cpp")
 if (OpenMP_FOUND)
     target_link_libraries(SampleJaccard ${OpenMP_CXX_LIBRARIES} HighFive)
