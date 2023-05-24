@@ -1,4 +1,4 @@
-#!/usr/bin/env pythonu
+#!/usr/bin/env python
 
 # This script handles the execution of the join experiments
 # in two different modes:
@@ -726,13 +726,34 @@ class FaissHNSW(Algorithm):
         self.time_index = time.time() - start
     def run(self, params):
         """Run the workload. This is timed."""
-        print("  Top-{} join".format(self.k))
-        self.faiss_index.hnsw.efSearch = params["efSearch"]
-        start = time.time()
-        k = params['k']
-        _dists, idxs = self.faiss_index.search(self.data, k+1)
-        self.time_run = time.time() - start
-        self.result_indices = idxs[:,1:]
+        if "mode" not in params or params["mode"] == "local":
+            print("  Local join")
+            self.faiss_index.hnsw.efSearch = params["efSearch"]
+            start = time.time()
+            k = params['k']
+            _dists, idxs = self.faiss_index.search(self.data, k+1)
+            self.time_run = time.time() - start
+            self.result_indices = idxs[:,1:]
+        elif params["mode"] == "global":
+            print("  Global join")
+
+            self.faiss_index.hnsw.efSearch = params["efSearch"]
+            start = time.time()
+            k = params['k']
+            dists, idxs = self.faiss_index.search(self.data, k+1)
+            self.time_run = time.time() - start
+            
+            res = []
+            for i in range(idxs.shape[0]):
+                for j in range(1,idxs.shape[1]):
+                    a = idxs[i, 0]
+                    b = idxs[i, j]
+                    if a != b:
+                        res.append((dists[i,j], min(a, b), max(a, b)))
+            res.sort()
+
+            self.result_indices = res[:k]
+
     def result(self):
         return self.result_indices
     def times(self):

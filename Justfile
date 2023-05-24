@@ -57,7 +57,7 @@ distr data:
   env TOPK_DIR=/mnt/large_storage/topk-join/ python3 join-experiments/plot.py {{data}}
 
 console:
-  cd join-experiments && env TOPK_DIR=/mnt/large_storage/topk-join/ python3
+  cd join-experiments && env TOPK_DIR=/mnt/large_storage/topk-join/ jupyter console
 
 aol:
   cd join-experiments && env TOPK_DIR=/mnt/large_storage/topk-join/ python3 -c 'import run; run.DATASETS["AOL"]()'
