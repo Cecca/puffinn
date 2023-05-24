@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
               << " vectors from hdf5 file, of dimension "
               << dim << std::endl;
 
-    std::vector<std::vector<uint32_t>> out_res;
+    std::vector<std::vector<float>> out_res;
 
     if (exact) {
         std::vector<std::vector<Pair>> threads_res(omp_get_max_threads());
@@ -170,10 +170,11 @@ int main(int argc, char** argv) {
         for (auto v : data) { index.insert(v); }
         index.rebuild(false, false);
         auto pairs = index.global_lsh_join(k, 0.999);
-        for (auto entry : pairs.best_indices()) {
-            std::vector<uint32_t> vpair;
-            vpair.push_back(entry.first);
+        for (auto entry : pairs.best_entries()) {
+            std::vector<float> vpair;
             vpair.push_back(entry.second);
+            vpair.push_back(entry.first.first);
+            vpair.push_back(entry.first.second);
             out_res.push_back(vpair);
         }
 
@@ -184,7 +185,7 @@ int main(int argc, char** argv) {
     /* } */
     std::stringstream key;
     key << "top-" << k << "-pairs";
-    H5Easy::dump(file, key.str(), out_res);
+    H5Easy::dump(file, key.str(), out_res, H5Easy::DumpMode::Overwrite);
 
     return 0;
 }

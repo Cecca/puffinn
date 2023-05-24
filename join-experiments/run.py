@@ -258,7 +258,7 @@ def compute_recalls(db):
     missing_recalls = db.execute("SELECT rowid, algorithm, params, dataset, k, output_file, hdf5_group FROM main WHERE recall IS NULL AND WORKLOAD = 'global-top-k';").fetchall()
     print("There are {} missing recalls for global-top-k".format(len(missing_recalls)))
     for rowid, algorithm, params, dataset, k, output_file, hdf5_group in missing_recalls:
-        if k > 1000:
+        if k > 10000:
             continue
 
         if 'sample' in dataset:
@@ -266,34 +266,37 @@ def compute_recalls(db):
 
         # Compute the top-1000 distances for the dataset, if they are not already there
         dist_key, nn_key = '/top-1000-dists', '/top-1000-neighbors'
-        top_pairs_key = '/top-1000-pairs'
+        top_pairs_key = '/top-10000-pairs'
 
         dataset_path = DATASETS[dataset]()
         with h5py.File(dataset_path, 'r+') as hfp:
             if top_pairs_key not in hfp:
-                if dist_key not in hfp or nn_key not in hfp:
-                    print('Computing top distances for', dataset)
-                    distances, neighbors, avg_distance = compute_distances(1000, hfp['/train'], hfp.attrs['distance'])
-                    hfp[dist_key] = distances
-                    hfp[nn_key] = neighbors
-                    hfp['/average_distance'] = avg_distance
+                continue
+                # if dist_key not in hfp or nn_key not in hfp:
+                #     print('Computing top distances for', dataset)
+                #     distances, neighbors, avg_distance = compute_distances(1000, hfp['/train'], hfp.attrs['distance'])
+                #     hfp[dist_key] = distances
+                #     hfp[nn_key] = neighbors
+                #     hfp['/average_distance'] = avg_distance
 
-                    print('Computing top 1000 pairs for', dataset)
-                    distances = hfp[dist_key]
-                    neighbors = hfp[nn_key]
-                    topk = []
-                    for i, (dists, neighs) in tqdm(enumerate(zip(distances, neighbors)), total=neighbors.shape[0]):
-                        for d, j in zip(dists, neighs):
-                            if i != j:
-                                t = (d, min(i, j), max(i, j))
-                                if len(topk) > 2000:
-                                    heapq.heappushpop(topk, t)
-                                else:
-                                    heapq.heappush(topk, t)
-                    topk = list(set(topk)) # remove duplicates
-                    topk.sort(reverse=True)
-                    topk = topk[:1000]
-                    hfp[top_pairs_key] = topk
+                #     print('Computing top 1000 pairs for', dataset)
+                #     distances = hfp[dist_key]
+                #     neighbors = hfp[nn_key]
+                #     topk = []
+                #     for i, (dists, neighs) in tqdm(enumerate(zip(distances, neighbors)), total=neighbors.shape[0]):
+                #         for d, j in zip(dists, neighs):
+                #             if i != j:
+                #                 t = (d, min(i, j), max(i, j))
+                #                 if len(topk) > 2000:
+                #                     heapq.heappushpop(topk, t)
+                #                 else:
+                #                     heapq.heappush(topk, t)
+                #     topk = list(set(topk)) # remove duplicates
+                #     topk.sort(reverse=True)
+                #     topk = topk[:1000]
+                #     hfp[top_pairs_key] = topk
+
+            assert top_pairs_key in hfp
 
             if hfp[top_pairs_key].shape[1] == 3:
                 baseline_pairs = set([(min(pair[0], pair[1]), max(pair[0], pair[1])) 
@@ -1727,7 +1730,7 @@ if __name__ == "__main__":
     #     run_multiple(index_params, query_params)
 
 
-    for dataset in ['glove-200']: #, 'DeepImage']:#, 'DBLP', 'Orkut']:
+    for dataset in ['glove-200', 'DeepImage']:#, 'DBLP', 'Orkut']:
         # ----------------------------------------------------------------------
         # Xiao et al. global top-k
         # if dataset in ['AOL', 'DBLP', "Orkut", "movielens-20M"]:
@@ -1769,32 +1772,32 @@ if __name__ == "__main__":
                 query_params = [
                     {'k': k, 'recall': recall, 'method': 'LSHJoinGlobal'}
                     for recall in [0.8, 0.9]
-                    for k in [1, 10, 100, 1000]
+                    for k in [1, 10, 100, 1000, 10000]
                 ]
                 run_multiple(index_params, query_params)
 
         # ----------------------------------------------------------------------
         # LSB-Tree global top-k
-        # for m in [8]:
-        #     for w in [0.1]:
-        #         index_params = {
-        #             'dataset': dataset,
-        #             'workload': 'global-top-k',
-        #             'algorithm': 'LSBTree',
-        #             'params': {
-        #                 'm': m,
-        #                 'w': w,
-        #             }
-        #         }
-        #         join_params = [
-        #             {
-        #                 'k': k, 
-        #                 'min_leaves': min_leaves
-        #             }
-        #             for k in [100, 1000]
-        #             for min_leaves in [0, 2, 4, 8, 16, 32]
-        #         ]
-        #         run_multiple(index_params, join_params)
+        for m in [8]:
+            for w in [0.1]:
+                index_params = {
+                    'dataset': dataset,
+                    'workload': 'global-top-k',
+                    'algorithm': 'LSBTree',
+                    'params': {
+                        'm': m,
+                        'w': w,
+                    }
+                }
+                join_params = [
+                    {
+                        'k': k, 
+                        'min_leaves': min_leaves
+                    }
+                    for k in [1, 10, 100, 1000, 10000]
+                    for min_leaves in [0, 2, 4, 8]
+                ]
+                run_multiple(index_params, join_params)
 
     for dataset in ['glove-200', 'DeepImage']:
         continue
