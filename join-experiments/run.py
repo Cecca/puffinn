@@ -230,29 +230,29 @@ def get_baseline_indices(db, dataset, k):
 
 def compute_recalls(db):
     # Local topk
-    missing_recalls = db.execute("SELECT rowid, algorithm, params, dataset, k, output_file, hdf5_group FROM main WHERE recall IS NULL AND WORKLOAD = 'local-top-k' and k <= 10;").fetchall()
-    print("there are {} missing recalls for local topk".format(len(missing_recalls)))
-    for rowid, algorithm, params, dataset, k, output_file, hdf5_group in missing_recalls:
-        if k > 10: # FIXME handle the case for k > 10 instead of skipping it
-            continue
-        print("Computing recalls for {} {} on {} with k={}".format(algorithm, params, dataset, k))
-        baseline_indices = get_baseline_indices(db, dataset, k)
-        if baseline_indices is None:
-            print("Missing baseline")
-            continue
-        output_file = os.path.join(BASE_DIR, output_file)
-        print("output file", output_file, "rowid", rowid, "group", hdf5_group)
-        with h5py.File(output_file) as hfp:
-            actual_indices = np.array(hfp[hdf5_group]['local-top-{}'.format(k)])
-        avg_recall = compute_recall(k, baseline_indices, actual_indices, output_file, hdf5_group)
-        print("Average recall is", avg_recall)
-        db.execute(
-            """UPDATE main
-                 SET recall = :recall
-               WHERE rowid = :rowid ;
-            """,
-            {"rowid": rowid, "recall": avg_recall}
-        )
+    # missing_recalls = db.execute("SELECT rowid, algorithm, params, dataset, k, output_file, hdf5_group FROM main WHERE recall IS NULL AND WORKLOAD = 'local-top-k' and k <= 10;").fetchall()
+    # print("there are {} missing recalls for local topk".format(len(missing_recalls)))
+    # for rowid, algorithm, params, dataset, k, output_file, hdf5_group in missing_recalls:
+    #     if k > 10: # FIXME handle the case for k > 10 instead of skipping it
+    #         continue
+    #     print("Computing recalls for {} {} on {} with k={}".format(algorithm, params, dataset, k))
+    #     baseline_indices = get_baseline_indices(db, dataset, k)
+    #     if baseline_indices is None:
+    #         print("Missing baseline")
+    #         continue
+    #     output_file = os.path.join(BASE_DIR, output_file)
+    #     print("output file", output_file, "rowid", rowid, "group", hdf5_group)
+    #     with h5py.File(output_file) as hfp:
+    #         actual_indices = np.array(hfp[hdf5_group]['local-top-{}'.format(k)])
+    #     avg_recall = compute_recall(k, baseline_indices, actual_indices, output_file, hdf5_group)
+    #     print("Average recall is", avg_recall)
+    #     db.execute(
+    #         """UPDATE main
+    #              SET recall = :recall
+    #            WHERE rowid = :rowid ;
+    #         """,
+    #         {"rowid": rowid, "recall": avg_recall}
+    #     )
 
     # Global topk
     missing_recalls = db.execute("SELECT rowid, algorithm, params, dataset, k, output_file, hdf5_group FROM main WHERE recall IS NULL AND WORKLOAD = 'global-top-k';").fetchall()
@@ -309,6 +309,7 @@ def compute_recalls(db):
                     (min(pair[0], pair[1]), max(pair[0], pair[1]))
                     for pair in top[top[:,0] >= kth_sim][:,1:].astype(np.int32)
                 ])
+                print("selected {} baseline pairs".format(len(baseline_pairs)))
 
             else:
                 baseline_pairs = set([(min(pair[0], pair[1]), max(pair[0], pair[1])) 
@@ -323,10 +324,14 @@ def compute_recalls(db):
             actual_pairs = set(map(tuple, hfp[hdf5_group]['global-top-{}'.format(k)]))
         print("Actual pairs")
         print(actual_pairs)
+        print("Baseline pairs")
+        print(baseline_pairs)
         matched = 0
         for pair in baseline_pairs:
             if pair in actual_pairs:
                 matched += 1
+            else:
+                print(f"pair {pair} missing from actual_pairs")
         recall = matched / k
         db.execute(
             """UPDATE main
@@ -710,19 +715,20 @@ class FaissHNSW(Algorithm):
         f = h5py.File(h5py_path)
         assert f.attrs['distance'] == 'cosine' or f.attrs['distance'] == 'angular'
         self.data = np.array(f['train']).astype(np.float32)
+        self.data = sklearn.preprocessing.normalize(self.data, axis=1, norm='l2')
         f.close()
     def index(self, params):
         """Setup the index, if any. This is timed."""
         print("  Building index")
         start = time.time()
         faiss.omp_set_num_threads(params['threads'])
-        X = sklearn.preprocessing.normalize(self.data, axis=1, norm='l2')
-
-        if X.dtype != np.float32:
-            X = X.astype(np.float32)
-        self.faiss_index = faiss.IndexHNSWFlat(len(X[0]), params["M"])
+        # X = sklearn.preprocessing.normalize(self.data, axis=1, norm='l2')
+        #
+        # if X.dtype != np.float32:
+        #     X = X.astype(np.float32)
+        self.faiss_index = faiss.IndexHNSWFlat(len(self.data[0]), params["M"])
         self.faiss_index.hnsw.efConstruction = params["efConstruction"]
-        self.faiss_index.add(X)
+        self.faiss_index.add(self.data)
         self.time_index = time.time() - start
     def run(self, params):
         """Run the workload. This is timed."""
@@ -752,7 +758,7 @@ class FaissHNSW(Algorithm):
                         res.append((dists[i,j], min(a, b), max(a, b)))
             res.sort()
 
-            self.result_indices = res[:k]
+            self.result_indices = [(t[1], t[2]) for t in res[:k]]
 
     def result(self):
         return self.result_indices
@@ -1751,7 +1757,7 @@ if __name__ == "__main__":
     #     run_multiple(index_params, query_params)
 
 
-    for dataset in ['glove-200', 'DeepImage']:#, 'DBLP', 'Orkut']:
+    for dataset in ['glove-200']:#, 'DeepImage']:#, 'DBLP', 'Orkut']:
         # ----------------------------------------------------------------------
         # Xiao et al. global top-k
         # if dataset in ['AOL', 'DBLP', "Orkut", "movielens-20M"]:
@@ -1819,6 +1825,29 @@ if __name__ == "__main__":
                     for min_leaves in [0, 2, 4, 8]
                 ]
                 run_multiple(index_params, join_params)
+
+        for M in [48]:
+            for efConstruction in [100, 500]:
+                index_params = {
+                    'M': M,
+                    'efConstruction': efConstruction,
+                    'threads': 52
+                }
+                join_params = [
+                    {'efSearch': efSearch, 'k': k, 'mode': 'global'}
+                    for k in [1, 10, 100]
+                    for efSearch in [k*8, k*12, k*16]
+                ]
+                run_multiple(
+                    {
+                        'dataset': dataset,
+                        'workload': 'global-top-k',
+                        'algorithm': 'faiss-HNSW',
+                        'threads': threads,
+                        'params': index_params
+                    },
+                    join_params
+                )
 
     for dataset in ['glove-200', 'DeepImage']:
         continue
