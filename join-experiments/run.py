@@ -1031,6 +1031,22 @@ def deep_image(out_fn):
     fv = np.fromfile(filename, dtype=np.float32)
     dim = fv.view(np.int32)[0]
     fv = fv.reshape(-1, dim + 1)[:, 1:]
+
+    # Normalize
+    print("Normalizing")
+    fv = sklearn.preprocessing.normalize(fv, axis=1, norm='l2')
+    # Now remove duplicates, there are 4867 of them 
+    # that make the top-k global case trivial
+    #
+    # First sort lexicographically the rows
+    print("Sorting columns")
+    perm = np.lexsort(fv.T[::-1])
+    fv = fv[perm]
+    # Then keep only the distinct rows
+    print("Removing duplicates")
+    fv = np.unique(fv, axis=0)
+
+    print("Writing output")
     write_dense(out_fn, fv)
     return out_fn
 
