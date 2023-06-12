@@ -307,7 +307,7 @@ def compute_recalls(db):
                 # to the k-th
                 baseline_pairs = set([
                     (min(pair[0], pair[1]), max(pair[0], pair[1]))
-                    for pair in top[top[:,0] >= kth_sim][:,1:].astype(np.int32)
+                    for pair in top[top[:,0] >= kth_sim - 0.0001][:,1:].astype(np.int32)
                 ])
                 print("selected {} baseline pairs".format(len(baseline_pairs)))
 
@@ -1773,27 +1773,27 @@ if __name__ == "__main__":
     #     run_multiple(index_params, query_params)
 
 
-    for dataset in ['glove-200']:#, 'DeepImage']:#, 'DBLP', 'Orkut']:
+    for dataset in ['glove-200', 'DeepImage', 'Orkut', 'DBLP']:#, 'DBLP', 'Orkut']:
         # ----------------------------------------------------------------------
         # Xiao et al. global top-k
-        # if dataset in ['AOL', 'DBLP', "Orkut", "movielens-20M"]:
-        #     index_params = {
-        #         'dataset': dataset,
-        #         'workload': 'global-top-k',
-        #         'algorithm': 'XiaoEtAl',
-        #         'params': {}
-        #     }
-        #     query_params = [
-        #         {'k': k}
-        #         for k in [1, 10, 100]
-        #     ]
-        #     run_multiple(index_params, query_params)
+        if dataset in ['AOL', 'DBLP', "Orkut", "movielens-20M"]:
+            index_params = {
+                'dataset': dataset,
+                'workload': 'global-top-k',
+                'algorithm': 'XiaoEtAl',
+                'params': {}
+            }
+            query_params = [
+                {'k': k}
+                for k in [1, 10, 100, 1000, 10000]
+            ]
+            run_multiple(index_params, query_params)
 
         # ----------------------------------------------------------------------
         # PUFFINN global top-k
         for hash_source in ['Independent']:
             space_usage = {
-                'DeepImage': [4096],# 8192, 16384, 32768, 65536],
+                'DeepImage': [4096, 8192, 16384, 32768, 65536],
                 'AOL': [512, 1024, 2048, 4096],
                 'glove-200': [1024, 2048, 4096, 8192, 16384],
                 'Orkut': [2048, 4096, 8192, 16384, 32768],
@@ -1821,49 +1821,51 @@ if __name__ == "__main__":
 
         # ----------------------------------------------------------------------
         # LSB-Tree global top-k
-        for m in [8]:
-            for w in [0.1]:
-                index_params = {
-                    'dataset': dataset,
-                    'workload': 'global-top-k',
-                    'algorithm': 'LSBTree',
-                    'params': {
-                        'm': m,
-                        'w': w,
-                    }
-                }
-                join_params = [
-                    {
-                        'k': k, 
-                        'min_leaves': min_leaves
-                    }
-                    for k in [1, 10, 100, 1000, 10000]
-                    for min_leaves in [0, 2, 4, 8]
-                ]
-                run_multiple(index_params, join_params)
-
-        for M in [48]:
-            for efConstruction in [100, 500]:
-                index_params = {
-                    'M': M,
-                    'efConstruction': efConstruction,
-                    'threads': 52
-                }
-                join_params = [
-                    {'efSearch': efSearch, 'k': k, 'mode': 'global'}
-                    for k in [1, 10, 100]
-                    for efSearch in [k*8, k*12, k*16]
-                ]
-                run_multiple(
-                    {
-                        'dataset': dataset,
-                        'workload': 'global-top-k',
-                        'algorithm': 'faiss-HNSW',
-                        'threads': threads,
-                        'params': index_params
-                    },
-                    join_params
-                )
+        # for m in [8]:
+        #     for w in [0.1]:
+        #         index_params = {
+        #             'dataset': dataset,
+        #             'workload': 'global-top-k',
+        #             'algorithm': 'LSBTree',
+        #             'threads': threads,
+        #             'params': {
+        #                 'threads': threads,
+        #                 'm': m,
+        #                 'w': w,
+        #             }
+        #         }
+        #         join_params = [
+        #             {
+        #                 'k': k,
+        #                 'min_leaves': min_leaves
+        #             }
+        #             for k in [1, 10, 100, 1000, 10000]
+        #             for min_leaves in [0, 2, 4, 8]
+        #         ]
+        #         run_multiple(index_params, join_params)
+        #
+        # for M in [48]:
+        #     for efConstruction in [100, 500]:
+        #         index_params = {
+        #             'M': M,
+        #             'efConstruction': efConstruction,
+        #             'threads': 52
+        #         }
+        #         join_params = [
+        #             {'efSearch': efSearch, 'k': k, 'mode': 'global'}
+        #             for k in [1, 10, 100]
+        #             for efSearch in [k*8, k*12, k*16]
+        #         ]
+        #         run_multiple(
+        #             {
+        #                 'dataset': dataset,
+        #                 'workload': 'global-top-k',
+        #                 'algorithm': 'faiss-HNSW',
+        #                 'threads': threads,
+        #                 'params': index_params
+        #             },
+        #             join_params
+        #         )
 
     for dataset in ['glove-200', 'DeepImage']:
         continue
