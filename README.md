@@ -1,4 +1,14 @@
+<p align="center">
+<b>
+⚠️ NOTE ⚠️
+</b>
+<br />
+The changes in this repository have been backported to the <a href="https://github.com/puffinn/puffinn">main PUFFINN repository</a>.
+This repository is maintained here only for archival purposes.
+</p>
+
 [![Build Status](https://travis-ci.com/puffinn/puffinn.svg?branch=master)](https://travis-ci.com/puffinn/puffinn)
+
 
 # PUFFINN - Parameterless and Universal Fast FInding of Nearest Neighbors
 PUFFINN is an easily configurable library for finding the approximate nearest neighbors of arbitrary points.
